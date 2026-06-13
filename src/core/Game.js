@@ -221,7 +221,7 @@ export class Game {
   _teardownWorld() {
     if (this.vehicle) { this.scene.remove(this.vehicle.mesh); this.vehicle = null; }
     if (this.player) this.player.driving = false;
-    if (this._nadeModel) { this.camera.remove(this._nadeModel); this._nadeModel = null; }
+    this._clearNadeModel();
     if (this._viewModel) this._viewModel.visible = true;
     if (this.level) { this.scene.remove(this.level.group); this.level.dispose(); this.level = null; }
     for (const e of this.enemies) this.scene.remove(e.mesh);
@@ -329,6 +329,10 @@ export class Game {
     this.state = 'result';
     this.input.setEnabled(false); this.input.exitLock();
     this.hud.clearTransients();
+    // drop a held grenade hand and restore the weapon so neither freezes
+    // on screen under the result banner (death/win can land mid-cook)
+    this._clearNadeModel();
+    if (this._viewModel) this._viewModel.visible = !this.player.driving;
     this.audio.sfx('win');
     markCompleted(this.missionIndex);
     clearCheckpoint(this.missionIndex);
@@ -342,6 +346,8 @@ export class Game {
     this.state = 'result';
     this.input.setEnabled(false); this.input.exitLock();
     this.hud.clearTransients();
+    this._clearNadeModel();
+    if (this._viewModel) this._viewModel.visible = !this.player.driving;
     this.audio.sfx('lose');
     this.hud.banner('DOWN', reason || 'You fell on the Aureole.', 2.5);
     setTimeout(() => this._showResult(false, false), 2200);
@@ -407,27 +413,42 @@ export class Game {
     const c = this.player.cooking;
     const ev = this.player.nadeEvent;
     this.player.nadeEvent = null;
-    if (c && !this._nadeModel) {
-      this._nadeModel = AssetFactory.grenadeViewModel(c.sticky);
-      this._nadeModel.position.set(-0.24, -0.55, -0.5);
-      this._nadeModel.rotation.y = Math.PI;
-      this.camera.add(this._nadeModel);
-      this._nadeThrowT = 0;
-    }
-    if (!this._nadeModel) return;
+
+    // instant drop on cancel / in-hand detonation
+    if (ev === 'cancelled') { this._clearNadeModel(); return; }
+
     if (c) {
+      // (re)build when there's no hand yet, the grenade type changed, or a
+      // previous throw is still animating out — covers a fast re-prime inside
+      // the ~0.2s throw window (otherwise the thrown model would be reused and
+      // show the wrong grenade, jerking back into the cook pose)
+      if (!this._nadeModel || this._nadeThrowT > 0 || this._nadeSticky !== c.sticky) {
+        if (this._nadeModel) this.camera.remove(this._nadeModel);
+        this._nadeModel = AssetFactory.grenadeViewModel(c.sticky);
+        this._nadeModel.position.set(-0.24, -0.55, -0.5);
+        this._nadeModel.rotation.y = Math.PI;
+        this.camera.add(this._nadeModel);
+        this._nadeSticky = c.sticky;
+        this._nadeThrowT = 0;
+      }
       const burn = c.sticky ? 0.2 : 1 - c.fuse / c.max;
       this._nadeModel.position.y += (-0.3 - this._nadeModel.position.y) * Math.min(1, dt * 12);
       this._nadeModel.position.x = -0.24 + (Math.random() - 0.5) * 0.022 * burn;
-    } else if (ev === 'cancelled') {
-      this.camera.remove(this._nadeModel); this._nadeModel = null;
-    } else {
-      this._nadeThrowT += dt;
-      this._nadeModel.position.z -= dt * 3.2;
-      this._nadeModel.position.y += (this._nadeThrowT < 0.07 ? dt * 3 : -dt * 5);
-      this._nadeModel.rotation.x -= dt * 7;
-      if (this._nadeThrowT > 0.2) { this.camera.remove(this._nadeModel); this._nadeModel = null; }
+      return;
     }
+
+    // no active cook: play out the overhand throw arc, then drop the hand
+    if (!this._nadeModel) return;
+    this._nadeThrowT += dt;
+    this._nadeModel.position.z -= dt * 3.2;
+    this._nadeModel.position.y += (this._nadeThrowT < 0.07 ? dt * 3 : -dt * 5);
+    this._nadeModel.rotation.x -= dt * 7;
+    if (this._nadeThrowT > 0.2) this._clearNadeModel();
+  }
+
+  _clearNadeModel() {
+    if (this._nadeModel) { this.camera.remove(this._nadeModel); this._nadeModel = null; }
+    this._nadeThrowT = 0;
   }
 
   _setViewModel(key) {

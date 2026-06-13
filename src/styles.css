@@ -119,31 +119,41 @@ html, body {
 }
 @keyframes crawl-prelude { 0%,8% { opacity: 0; } 22%,60% { opacity: 1; } 88%,100% { opacity: 0; } }
 
-.crawl-viewport { position: absolute; inset: 0; perspective: 420px; overflow: hidden; }
+.crawl-viewport { position: absolute; inset: 0; perspective: 360px; perspective-origin: 50% 32%; overflow: hidden; }
+/* The tilt lives on a full-screen plane that pivots at the BOTTOM of the
+   viewport, so the text recedes up toward a fixed vanishing point. (Tilting the
+   tall text block about its own top instead makes its lower lines swing through
+   the vanishing point and fold/mirror — the artifact we're avoiding.) */
+.crawl-3d { position: absolute; inset: 0; transform: rotateX(34deg); transform-origin: 50% 100%; transform-style: preserve-3d; }
 .crawl-text {
-  position: absolute; top: 100%; left: 50%; width: min(640px, 78vw);
-  transform: translateX(-50%) rotateX(26deg); transform-origin: 50% 0%;
-  color: var(--hud-amber); font-weight: 650; font-size: clamp(17px, 2.3vw, 26px);
-  line-height: 1.7; text-align: justify;
-  animation: crawl-scroll 46s linear 4s forwards;
+  position: absolute; top: 100%; left: 50%; width: min(680px, 84vw);
+  transform: translateX(-50%);
+  color: var(--hud-amber); font-weight: 650; font-size: clamp(18px, 2.4vw, 28px);
+  line-height: 1.7; text-align: center;
+  animation: crawl-scroll 54s linear 3.5s forwards;
 }
-.crawl-text p { margin: 0 0 1.3em; text-shadow: 0 0 14px rgba(255,180,84,0.25); }
+.crawl-text p { margin: 0 0 1.3em; text-align: justify; text-shadow: 0 0 14px rgba(255,180,84,0.25); }
 .crawl-text b { color: #ffe6b0; }
+/* inline-block shrink-wraps the background box to the glyphs, so background-clip
+   never clips the last letter into transparency (the cut-off "O") */
 .crawl-logo {
-  text-align: center; font-size: clamp(60px, 15vw, 150px); font-weight: 900;
-  letter-spacing: 8px; line-height: 0.9; margin-bottom: 8px;
+  display: inline-block; padding: 0 0.16em; margin-bottom: 10px;
+  font-size: clamp(54px, 12vw, 124px); font-weight: 900;
+  letter-spacing: 6px; line-height: 1.05;
   background: linear-gradient(180deg, #d9f6ff, #5fd0e6 55%, #2c8aa6);
   -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
 }
 .crawl-ep {
-  text-align: center; color: var(--ink); font-size: clamp(16px, 2.2vw, 26px);
-  letter-spacing: 8px; text-transform: uppercase; margin-bottom: 1.6em;
+  color: var(--ink); font-size: clamp(15px, 2.1vw, 24px);
+  letter-spacing: 7px; text-transform: uppercase; margin-bottom: 1.6em;
 }
-@keyframes crawl-scroll { 0% { top: 100%; } 100% { top: -210%; } }
+@keyframes crawl-scroll { 0% { top: 100%; } 100% { top: -260%; } }
 .crawl-skip { position: absolute; right: 22px; bottom: 20px; z-index: 5; padding: 8px 16px; }
 
 @media (prefers-reduced-motion: reduce) {
-  .crawl-text { animation: none; position: static; transform: none; max-height: 86vh; overflow-y: auto; margin: 6vh auto; }
+  .crawl-viewport { position: static; perspective: none; overflow: visible; }
+  .crawl-3d { position: static; transform: none; }
+  .crawl-text { animation: none; position: static; transform: none; width: min(680px, 86vw); max-height: 84vh; overflow-y: auto; margin: 4vh auto; }
   .crawl-prelude { animation: none; opacity: 1; position: static; transform: none; margin-top: 4vh; }
   .crawl-scene { flex-direction: column; }
   .crawl-scene::before { display: none; }

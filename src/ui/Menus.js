@@ -84,6 +84,7 @@ export class Menus {
       <div class="crawl-scene interactive">
         <div class="crawl-prelude">A frontier gone quiet. A distress call that should never have been answered.</div>
         <div class="crawl-viewport">
+          <div class="crawl-3d">
           <div class="crawl-text">
             <div class="crawl-logo">WEBALO</div>
             <div class="crawl-ep">Evolved Combat</div>
@@ -91,6 +92,7 @@ export class Menus {
             <p>Its source was the <b>AUREOLE</b> — a ringworld older than memory, encircled by the <b>WOBBLE COALITION</b>: a swarm of googly-eyed zealots who tend its ancient machinery and worship the ring as a friend. They have no idea what it was built to cage.</p>
             <p>One dropship answered the call. Only Sergeant <b>VANCE ORION</b> walked away from the crash — a lone marine, a cracked AI named <b>IRIS</b>, and a structure the size of a nightmare charging toward something terrible.</p>
             <p>The Coalition thinks he is trespassing. He intends to prove them right.</p>
+          </div>
           </div>
         </div>
         <button class="btn ghost crawl-skip" data-act="skip">Skip ▸</button>

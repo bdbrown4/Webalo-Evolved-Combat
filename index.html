@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Webalo: Evolved Combat</title>
+  <meta name="description" content="An original open-source browser FPS inspired by the early-2000s sci-fi shooter genre." />
+  <link rel="stylesheet" href="./src/styles.css" />
+</head>
+<body>
+  <!-- Render target -->
+  <canvas id="game-canvas"></canvas>
+
+  <!-- All HUD + menu UI is injected into this overlay by the JS modules -->
+  <div id="ui-root"></div>
+
+  <!-- Click-to-focus prompt shown when pointer lock is lost mid-game -->
+  <div id="focus-prompt" class="hidden">Click to resume — mouse look engaged</div>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>

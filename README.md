@@ -1,0 +1,161 @@
+# Webalo: Evolved Combat
+
+An **original, open-source, browser-based sci-fi FPS** in the spirit of the
+early-2000s console shooter: recharging energy shields, a strict two-weapon
+carry, cookable grenades, a scoped sidearm, a radar motion tracker, goofy
+aliens, and a climactic drive-or-die vehicle escape across a collapsing
+ringworld.
+
+Built with **[Three.js](https://threejs.org)** + **[Vite](https://vitejs.dev)**.
+Runs entirely client-side in any modern browser (WebGL2). **There are no asset
+files anywhere in this repository** — every mesh is generated procedurally in
+code, every surface texture is painted to a canvas at runtime, and every sound
+is synthesized with the Web Audio API. Clone it and the whole game is here.
+
+> **About the "in the spirit of"**: Webalo is a parody-flavored homage. Game
+> *mechanics* (shields, two-weapon limit, grenade types, a vehicle finale) are
+> not copyrightable and are faithfully recreated. Everything *expressive* —
+> characters, faction and species names, story, dialogue, art, and audio — is
+> **original**. The Wobble Coalition is deliberately goofy. This project ships
+> no third-party game assets and is not affiliated with or endorsed by any
+> other game's rights holders.
+
+## Quick start
+
+```bash
+npm install
+npm run dev      # opens http://localhost:5173
+```
+
+Build a static, deployable bundle (e.g. for GitHub Pages):
+
+```bash
+npm run build    # outputs to ./dist
+npm run preview  # serve the built bundle locally
+```
+
+## Features
+
+- **Classic shooter loop** — recharging shields layered over a smaller health
+  pool (shields absorb first and regenerate after a delay; health only comes
+  back from pickups), two-weapon carry with swap + reload, melee, and a
+  radar-style motion tracker.
+- **Five weapons, two firing models** — hitscan ballistics (pistol, auto rifle,
+  pellet boomstick) and travelling projectiles (goo caster, homing stinger),
+  each with its own reticle, ADS behavior, and recoil. The M7 sidearm carries a
+  2× smart-link **scope** with a full-screen optic overlay.
+- **Grenades with weight** — *hold* the throw key to **cook** a frag (the fuse
+  burns down with quickening beeps; hold too long and it goes off in your hand),
+  release to throw. Thrown frags **bounce** off walls and floors so you can bank
+  them around cover; **goober** grenades stick to the first surface — or enemy —
+  they touch. Your own blasts can hurt you, so the risk is real.
+- **First-person presence** — visible arms and gloved hands on every weapon, and
+  a dedicated grenade hand that raises, trembles as the fuse burns, and swings
+  on release.
+- **A drivable finale** — commandeer a Coalition transport and run the gauntlet
+  across the breaking Aureole, flattening minions at speed, before the ring
+  fires.
+- **Wobble Coalition AI** — several archetypes (melee swarmers, charging
+  bruisers, hovering ranged drones, shielded officers) plus a three-phase finale
+  boss, all with comically physical death tumbles.
+- **Procedural, atmospheric worlds** — ACES filmic tone mapping, canvas-painted
+  panel/grime textures, per-room light fixtures and fill lighting, exhaust pipes
+  and structural trim, starfields and a low sun over a kilometers-wide ringworld
+  on the horizon. Room footprints and ceiling heights vary so no two beats feel
+  like the same box.
+- **Complete front-end** — main menu, mission select with progress, tabbed
+  settings (live control rebinding, audio mixer, video/quality with a real bloom
+  toggle, difficulty), pause menu, and per-mission result screens.
+- **Data-driven campaign** — an 8-mission arc authored as plain data (see
+  `missions/schema.js`), with four difficulty tiers and automatic mid-mission
+  checkpoints.
+
+## Default controls
+
+All controls are **fully rebindable** in `Settings → Controls`.
+
+| Action | Default |
+| --- | --- |
+| Move | `W` `A` `S` `D` |
+| Look | Mouse |
+| Fire | Left Mouse |
+| Aim / zoom (scope) | Right Mouse |
+| Jump | `Space` |
+| Crouch | `Left Ctrl` |
+| Sprint | `Left Shift` |
+| Reload | `R` |
+| Melee | `V` |
+| Throw grenade (hold to cook) | `G` |
+| Swap weapon | `Q` (or mouse wheel) |
+| Select weapon 1 / 2 | `1` / `2` |
+| Switch grenade type | `B` |
+| Interact (consoles, etc.) | `F` |
+| Flashlight | `T` |
+| Pause / menu | `Esc` |
+
+The vehicle in the finale uses the same movement keys: `W`/`S` to
+accelerate and reverse, `A`/`D` to steer.
+
+Settings (controls, mouse sensitivity, audio levels, and video/quality options)
+persist in `localStorage`. Campaign progress and checkpoints are saved
+automatically.
+
+## Project layout
+
+```
+src/
+  main.js              boot + top-level wiring
+  core/
+    Game.js            render loop, scene/renderer, post-processing, state
+                       machine, mission flow, combat FX
+    Settings.js        persistent settings + keybindings (localStorage)
+    Input.js           keyboard/mouse, pointer lock, rebindable action map
+    Audio.js           synthesized SFX + adaptive music (WebAudio, no files)
+    AssetFactory.js    all procedural meshes, canvas textures, skies, view-models
+    Difficulty.js      difficulty tiers (enemy health + incoming damage scaling)
+  engine/
+    Physics.js         capsule-vs-AABB collision, gravity, ray/normal casts
+  entities/
+    Player.js          movement, shields/health, weapons, grenades, melee
+    Enemy.js           Wobble Coalition AI (idle/alert/chase/attack + boss)
+    Weapon.js          weapon definitions + firing logic (hitscan + projectile)
+    Projectile.js      goo bolts, homing shards, bouncing/sticky grenades
+    Vehicle.js         the drivable finale transport
+  world/
+    LevelBuilder.js    turns segment-based mission DATA into a dressed level
+  missions/
+    schema.js          the mission data contract (documented)
+    campaign.js        all eight missions as inline data + progress save/load
+  ui/
+    HUD.js             shields/health/ammo, reticle, scope, cook bar, tracker
+    Menus.js           main menu, settings (tabbed), pause, mission cards
+  styles.css           HUD + menu styling
+```
+
+## How it works
+
+The game is deliberately **dependency-light** (only Three.js) and
+**asset-free**. A few notes on how that's achieved:
+
+- **Meshes** are composed from primitives in `AssetFactory.js` — the goofy
+  aliens, weapons with first-person arms, props, the vehicle, and FX.
+- **Textures** are drawn to an offscreen `<canvas>` at load time
+  (`AssetFactory.surfaceTexture`) and tiled per surface, so floors and walls get
+  panels, seams, rivets, and grime without shipping image files.
+- **Audio** is fully synthesized in `Audio.js`: SFX are short procedural
+  oscillator/noise envelopes, and the music bed is a few layered oscillators
+  with a slow filter sweep whose intensity adapts per track.
+- **Levels** are pure data. A mission is a list of `segments` (rooms) with
+  enemies, cover density, pickups, objectives, and dialogue; `LevelBuilder.js`
+  turns that into geometry, collision, lighting, and dressing.
+
+## Contributing
+
+PRs welcome — especially new missions (add a mission object to
+`missions/campaign.js` matching `missions/schema.js`), enemy archetypes, and
+weapons. Please keep **all content original**: no ripped or third-party game
+assets, ever.
+
+## License
+
+MIT — see [LICENSE](./LICENSE).

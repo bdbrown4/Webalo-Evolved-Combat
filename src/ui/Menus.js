@@ -70,8 +70,10 @@ export class Menus {
     this.audio.setTrack('ambient');
 
     let done = false;
+    let timer = null;
     const finish = () => {
       if (done) return; done = true;
+      if (timer) clearTimeout(timer);
       window.removeEventListener('keydown', onKey, true);
       this.clear();
       onDone && onDone();
@@ -98,10 +100,30 @@ export class Menus {
         <button class="btn ghost crawl-skip" data-act="skip">Skip ▸</button>
       </div>`;
 
-    const text = this.el.querySelector('.crawl-text');
-    text.addEventListener('animationend', finish);
     this.el.querySelector('[data-act="skip"]').addEventListener('click', () => { this._click(); finish(); });
     window.addEventListener('keydown', onKey, true);
+
+    // Drive the crawl from JS at a constant pixel speed, measured against the
+    // actual content + viewport height. This keeps the pace identical on any
+    // screen, trims the dead tail to a beat, and uses the animation's finish
+    // callback (reliable, unlike CSS animationend here) to start the mission.
+    const text = this.el.querySelector('.crawl-text');
+    const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduce || !text.animate) {
+      // static layout (CSS handles it): auto-advance after a reading beat
+      timer = setTimeout(finish, 18000);
+      return;
+    }
+    const vh = window.innerHeight || 800;
+    const distance = vh + text.scrollHeight + 80;  // rise from below to fully clear the top
+    const speed = 50;                              // px/sec — calm, readable pace (slower than before)
+    const durMs = (distance / speed) * 1000;
+    const anim = text.animate(
+      [{ transform: 'translate(-50%, 0)' }, { transform: `translate(-50%, ${-distance}px)` }],
+      { duration: durMs, delay: 2200, easing: 'linear', fill: 'forwards' },
+    );
+    anim.onfinish = finish;
+    timer = setTimeout(finish, durMs + 3000); // safety net if onfinish doesn't fire
   }
 
   showCredits() {

@@ -127,10 +127,9 @@ html, body {
 .crawl-3d { position: absolute; inset: 0; transform: rotateX(34deg); transform-origin: 50% 100%; transform-style: preserve-3d; }
 .crawl-text {
   position: absolute; top: 100%; left: 50%; width: min(680px, 84vw);
-  transform: translateX(-50%);
+  transform: translate(-50%, 0); /* JS animates the translateY (see Menus.showIntro) */
   color: var(--hud-amber); font-weight: 650; font-size: clamp(18px, 2.4vw, 28px);
   line-height: 1.7; text-align: center;
-  animation: crawl-scroll 54s linear 3.5s forwards;
 }
 .crawl-text p { margin: 0 0 1.3em; text-align: justify; text-shadow: 0 0 14px rgba(255,180,84,0.25); }
 .crawl-text b { color: #ffe6b0; }
@@ -147,7 +146,6 @@ html, body {
   color: var(--ink); font-size: clamp(15px, 2.1vw, 24px);
   letter-spacing: 7px; text-transform: uppercase; margin-bottom: 1.6em;
 }
-@keyframes crawl-scroll { 0% { top: 100%; } 100% { top: -260%; } }
 .crawl-skip { position: absolute; right: 22px; bottom: 20px; z-index: 5; padding: 8px 16px; }
 
 @media (prefers-reduced-motion: reduce) {

@@ -10,6 +10,7 @@ export class HUD {
     this.el.id = 'hud';
     this.el.innerHTML = `
       <div id="reticle"><span class="r up"></span><span class="r down"></span><span class="r left"></span><span class="r right"></span></div>
+      <div id="turret-reticle" class="hidden"><span class="tr-ring"></span><span class="tr-dot"></span></div>
       <div id="cook" class="hidden"><div class="cook-fill"></div></div>
       <div id="scope" class="hidden"><div class="scope-cross h"></div><div class="scope-cross v"></div><div class="scope-zoom"></div></div>
       <div class="objective"><div class="o-label">Objective</div><div class="o-text" id="o-text">—</div></div>
@@ -78,6 +79,16 @@ export class HUD {
     else p.classList.add('hidden');
   }
 
+  // IRIS turret reticle while driving. info = { x, y, locked } in NDC, or null.
+  setTurret(info) {
+    const t = this.$('#turret-reticle');
+    if (!info) { t.classList.add('hidden'); return; }
+    t.classList.remove('hidden');
+    t.style.left = ((info.x * 0.5 + 0.5) * 100) + '%';
+    t.style.top = ((-info.y * 0.5 + 0.5) * 100) + '%';
+    t.classList.toggle('locked', !!info.locked);
+  }
+
   banner(big, small, seconds = 1.4) {
     const b = this.$('#banner');
     b.className = '';
@@ -127,10 +138,11 @@ export class HUD {
       cook.classList.toggle('hot', state.cook < 0.35);
     } else cook.classList.add('hidden');
 
-    // scope overlay (replaces the reticle while zoomed on a scoped weapon)
+    // scope overlay (replaces the reticle while zoomed on a scoped weapon).
+    // Driving hands the crosshair over to the IRIS turret reticle entirely.
     const scope = this.$('#scope');
-    scope.classList.toggle('hidden', !state.scoped);
-    this.$('#reticle').classList.toggle('hidden', !!state.scoped);
+    scope.classList.toggle('hidden', !state.scoped || state.driving);
+    this.$('#reticle').classList.toggle('hidden', !!state.scoped || !!state.driving);
     if (state.scoped) scope.querySelector('.scope-zoom').textContent = state.scopeZoom.toFixed(1) + '×';
 
     // damage vignette

@@ -19,6 +19,11 @@ export class Vehicle {
     this.mesh = AssetFactory.vehicle();
     this.mesh.position.copy(this.pos);
     this._spin = 0;
+    // IRIS turret: a free-moving on-screen reticle (NDC: x right, y up) that the
+    // player nudges with mouse/touch; IRIS auto-fires at the Wobble under it.
+    this.aim = { x: 0, y: -0.04 };
+    this.fireCd = 0;
+    this.lockedTarget = null;
   }
 
   forward() { return new THREE.Vector3(Math.sin(this.heading), 0, Math.cos(this.heading)); }
@@ -70,5 +75,39 @@ export class Vehicle {
     const camPos = this.pos.clone().addScaledVector(nf, -8); camPos.y += 4.5;
     this.camera.position.lerp(camPos, Math.min(1, dt * 6));
     this.camera.lookAt(this.pos.x + nf.x * 5, this.pos.y + 1.4, this.pos.z + nf.z * 5);
+
+    this._turret(dt, input, ctx, nf);
+  }
+
+  // IRIS's turret: move the reticle with look input, lock onto the nearest Wobble
+  // under it (in screen space), and auto-fire on a cooldown. Hitscan + tracer.
+  _turret(dt, input, ctx, nf) {
+    const SENS = 0.0042;
+    this.aim.x = Math.max(-0.92, Math.min(0.92, this.aim.x + input.mouseDX * SENS));
+    this.aim.y = Math.max(-0.92, Math.min(0.92, this.aim.y - input.mouseDY * SENS));
+
+    this.camera.updateMatrixWorld();
+    let best = null, bestD = 0.17; // NDC pick radius
+    const tmp = new THREE.Vector3();
+    if (ctx.enemies) {
+      for (const e of ctx.enemies) {
+        if (e.dead || e.type === 'boss') continue;        // the boss is roadkill-immune and not a turret target
+        tmp.copy(e.aimPoint()).project(this.camera);
+        if (tmp.z > 1) continue;                          // behind the camera
+        const d = Math.hypot(tmp.x - this.aim.x, tmp.y - this.aim.y);
+        if (d < bestD) { bestD = d; best = e; }
+      }
+    }
+    this.lockedTarget = best;
+
+    this.fireCd -= dt;
+    if (best && this.fireCd <= 0) {
+      this.fireCd = 0.22;
+      const muzzle = this.pos.clone().addScaledVector(nf, 0.6); muzzle.y += 2.0;
+      ctx.spawnTracer && ctx.spawnTracer(muzzle, best.aimPoint());
+      best.takeDamage(34, { source: this.pos });
+      ctx.onHitmark && ctx.onHitmark();
+      ctx.audio && ctx.audio.sfx('rifle');
+    }
   }
 }

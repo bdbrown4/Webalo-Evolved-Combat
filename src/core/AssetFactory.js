@@ -345,6 +345,46 @@ export const AssetFactory = {
     return g;
   },
 
+  // The lost Vanguard frigate waiting at the end of the escape run — drive into
+  // its lit hangar to win. Sleek and human (cyan-lit), against the goofy green
+  // Coalition. The hangar mouth faces -Z, toward the incoming track.
+  vanguardShip() {
+    const g = new THREE.Group();
+    const hull = mat(0x707e8c, { metal: 0.75, rough: 0.35 });
+    const dark = mat(0x1b2730, { metal: 0.6, rough: 0.5 });
+    const lit = (i = 1.4) => mat(0x0a2a36, { emissive: 0x5fd0e6, emissiveIntensity: i });
+
+    const body = new THREE.Mesh(new THREE.BoxGeometry(12, 6.5, 26), hull); body.position.set(0, 5, 2);
+    const bow = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 5.2, 9, 4), hull);
+    bow.rotation.x = Math.PI / 2; bow.rotation.z = Math.PI / 4; bow.position.set(0, 5, 19.5);
+    const keel = new THREE.Mesh(new THREE.BoxGeometry(7, 2.4, 24), dark); keel.position.set(0, 1.6, 2);
+    const bridge = new THREE.Mesh(new THREE.BoxGeometry(6, 3.2, 7), hull); bridge.position.set(0, 9.4, 6);
+    const wins = new THREE.Mesh(new THREE.BoxGeometry(6.1, 1.0, 2), lit(1.0)); wins.position.set(0, 9.8, 2.6);
+    g.add(body, bow, keel, bridge, wins);
+
+    for (const sx of [-1, 1]) {
+      const wing = new THREE.Mesh(new THREE.BoxGeometry(7, 0.8, 10), hull);
+      wing.position.set(sx * 8.5, 4.4, 3); wing.rotation.z = sx * 0.12;
+      const strip = new THREE.Mesh(new THREE.BoxGeometry(7, 0.25, 0.6), lit(1.6));
+      strip.position.set(sx * 8.5, 4.85, 8);
+      const eng = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.5, 2, 16), dark);
+      eng.rotation.x = Math.PI / 2; eng.position.set(sx * 3.4, 4.6, -12);
+      const glow = new THREE.Mesh(new THREE.CircleGeometry(1.2, 16), mat(0x9fe8ff, { emissive: 0x9fe8ff, emissiveIntensity: 2 }));
+      glow.position.set(sx * 3.4, 4.6, -13.05);
+      g.add(wing, strip, eng, glow);
+    }
+
+    // HANGAR opening on the -Z face — the drive-in target (low, at road level)
+    const frame = new THREE.Mesh(new THREE.BoxGeometry(9, 6.6, 1.2), lit(1.9)); frame.position.set(0, 2.8, -11.0);
+    const mouth = new THREE.Mesh(new THREE.BoxGeometry(7, 4.8, 4), mat(0x02060a, { emissive: 0x0a2230, emissiveIntensity: 0.6 }));
+    mouth.position.set(0, 2.6, -9.4);
+    const bayLight = new THREE.PointLight(0x5fd0e6, 6, 40); bayLight.position.set(0, 3.2, -7);
+    g.add(frame, mouth, bayLight);
+
+    g.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+    return g;
+  },
+
   muzzleFlash(color = 0xfff0a0) {
     const m = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 6), mat(color, { emissive: color, emissiveIntensity: 2, transparent: true, opacity: 0.9 }));
     return m;

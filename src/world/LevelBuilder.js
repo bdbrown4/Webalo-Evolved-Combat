@@ -30,6 +30,7 @@ export class LevelBuilder {
   build(mission, physics, ctx) {
     this.mission = mission;
     this.physics = physics;
+    physics.floorY = 0; // normal safety floor; the escape track drops it to a void
     const accent = new THREE.Color(mission.palette.accent);
     const floorTex = AssetFactory.surfaceTexture('floor');
     const wallTex = AssetFactory.surfaceTexture('wall');
@@ -64,6 +65,17 @@ export class LevelBuilder {
 
       const floorMat = texMat(floorTex, mission.palette.floor, 0.92, sz.w / 4, sz.d / 4);
       const wallMat = texMat(wallTex, mission.palette.wall, 0.8, (sz.w + sz.d) / 8, sz.h / 4);
+
+      // The finale's drive segment is an OPEN track over the void, not a room:
+      // keep only the boss-arena's back wall (its door, built as this segment's
+      // front pass), then lay the winding road out into the collapsing Aureole.
+      if (seg.event === 'vehicle-escape') {
+        if (i > 0) this._wallWithGap(wallMat, zCursor, Math.max(sz.w, dims[i - 1].w), Math.max(sz.h, dims[i - 1].h), physics);
+        this._buildEscapeTrack(room, zCursor, mission, physics, accent);
+        this.segments.push(room);
+        zCursor = room.zBack;
+        return;
+      }
 
       // floor (+ ceiling indoors)
       this._box(floorMat, 0, -0.5, cz, sz.w, 1, sz.d, physics, 'floor', true);
@@ -174,6 +186,72 @@ export class LevelBuilder {
     return { x: 0, y: 0.1, z: 3, yaw: 0 };
   }
 
+  // The finale escape road: a guardrail-less winding chain of platform tiles
+  // suspended over the void, threading through the collapsing Aureole and ending
+  // at the lost Vanguard frigate. AABB tiles overlap so the surface stays
+  // continuous; the meander keeps each step's lateral shift under a half-tile.
+  _buildEscapeTrack(room, zStart, mission, physics, accent) {
+    const STEP = 8, N = 40, TW = 14, TD = 13, THICK = 0.9;
+    const tileMat = new THREE.MeshStandardMaterial({ color: 0x2c2742, roughness: 0.95, metalness: 0.12 });
+    const rimMat = new THREE.MeshStandardMaterial({ color: 0x0a0a12, emissive: accent, emissiveIntensity: 1.5 });
+
+    const pts = [];
+    let z = zStart + 6;
+    for (let i = 0; i < N; i++) {
+      const tail = Math.max(0, i - (N - 4)) / 4;            // straighten + flatten into the ship over the final tiles
+      const ph = i * 0.30;
+      const x = (1 - tail) * (Math.sin(ph) * 20 + Math.sin(ph * 0.43) * 12); // wind(0)=0: lines up with the door + resume spawn
+      const y = (1 - tail) * Math.sin(ph * 0.7) * 2.2;
+      this._box(tileMat, x, y - THICK / 2, z, TW, THICK, TD, physics, 'floor', true);
+      for (const sx of [-1, 1]) {                            // glowing edge rims so the lip is readable in the dark
+        const rim = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.5, TD), rimMat);
+        rim.position.set(x + sx * (TW / 2 - 0.15), y + 0.15, z);
+        this.group.add(rim);
+      }
+      pts.push({ x, y, z });
+      z += STEP;
+    }
+    const end = pts[pts.length - 1];
+
+    // The Aureole, looming: vast rings the road threads through, a planet far
+    // below, tumbling debris, road lights. All decorative — no colliders.
+    const ringMat = new THREE.MeshStandardMaterial({ color: 0x6b7a92, metalness: 0.3, roughness: 0.6, emissive: 0x223347, emissiveIntensity: 0.4 });
+    for (let r = 0; r < 4; r++) {
+      const p = pts[Math.floor((r + 0.5) / 4 * N)];
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(62 + r * 16, 3.5, 8, 50), ringMat);
+      ring.position.set(p.x + (r % 2 ? 34 : -34), 10, p.z + 18);
+      ring.rotation.set(1.4, r * 0.6, 0.3);
+      this.group.add(ring);
+    }
+    const planet = new THREE.Mesh(new THREE.SphereGeometry(150, 24, 18),
+      new THREE.MeshStandardMaterial({ color: 0x36284f, roughness: 1, emissive: 0x140e22, emissiveIntensity: 0.6 }));
+    planet.position.set(150, -190, zStart + 200);
+    this.group.add(planet);
+    for (let d = 0; d < 26; d++) {
+      const p = pts[(d * 7) % N];
+      const s = 1 + (d % 5);
+      const chunk = new THREE.Mesh(new THREE.BoxGeometry(s, 1 + (d % 3), s * 0.8), tileMat);
+      chunk.position.set(p.x + ((d % 7) - 3) * 7, p.y - 5 - (d % 6) * 4, p.z + ((d % 5) - 2) * 5);
+      chunk.rotation.set(d * 0.7, d * 1.3, d * 0.5);
+      this.group.add(chunk);
+    }
+    for (let i = 4; i < N; i += 8) {
+      const p = pts[i];
+      const l = new THREE.PointLight(accent.getHex(), 14, 30, 2);
+      l.position.set(p.x, p.y + 4, p.z); this.group.add(l);
+    }
+
+    // the Vanguard frigate at the end — drive into its hangar to win
+    const ship = AssetFactory.vanguardShip();
+    ship.position.set(end.x, end.y, end.z + 13);
+    this.group.add(ship);
+
+    room.shipZone = { x: end.x, z: end.z + 2, halfW: 5 }; // win on crossing into the hangar mouth
+    room.trackBaseY = -3;                                  // lowest road y; fall below this -> the void
+    room.zBack = end.z + 26;
+    room.trackSpawnPoints = pts;                           // used to scatter Wobble along the road
+  }
+
   _box(mat, x, y, z, w, h, d, physics, tag, collide) {
     const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
     m.position.set(x, y, z);
@@ -229,9 +307,9 @@ export class LevelBuilder {
     this._spawnRoom(room, ctx);
     if (room.seg.event === 'vehicle-escape') {
       this.inEscape = true;
-      this.escapeTime = 40;
+      this.physics.floorY = -300; // open the void: drive off the road and you fall
       ctx.onMountVehicle && ctx.onMountVehicle();
-      ctx.onBanner && ctx.onBanner('DRIVE', 'Floor it to the tear before the Aureole fires', 1.8);
+      ctx.onBanner && ctx.onBanner('DRIVE', 'No guardrails. Reach the Vanguard — aim to let IRIS clear the Wobble.', 2.4);
     }
     ctx.audio && ctx.audio.sfx('objective');
   }
@@ -239,6 +317,24 @@ export class LevelBuilder {
   _spawnRoom(room, ctx) {
     if (room.spawned) return;
     room.spawned = true;
+    // Escape track: scatter the Wobble ALONG the road as turret targets. Hover
+    // types float beside the lip; grounded types ride the tiles.
+    if (room.seg.event === 'vehicle-escape' && room.trackSpawnPoints) {
+      const pts = room.trackSpawnPoints;
+      let slot = 7;
+      for (const grp of room.seg.enemies) {
+        for (let n = 0; n < grp.count; n++) {
+          const p = pts[Math.min(pts.length - 3, slot)]; slot += 2;
+          const off = ((n % 2) ? 1 : -1) * (3 + Math.random() * 4);
+          const e = ctx.spawnEnemy(grp.type, new THREE.Vector3(p.x + off, p.y + 3.0, p.z));
+          // Force every track Wobble to hover so they hold station as turret
+          // targets instead of backing off the lip and tumbling into the void.
+          e.hover = true;
+          room.enemies.push(e);
+        }
+      }
+      return;
+    }
     const sz = { w: room.w, d: room.d };
     for (const grp of room.seg.enemies) {
       for (let n = 0; n < grp.count; n++) {
@@ -286,21 +382,25 @@ export class LevelBuilder {
     // boss death tracking
     if (room.boss) room.bossDead = room.boss.dead;
 
-    // vehicle-escape countdown + exit
+    // escape: fall off the open road -> death; reach the Vanguard hangar -> win
     if (this.inEscape && this.activeIndex === this.segments.length - 1) {
-      this.escapeTime -= dt;
-      ctx.onEscape && ctx.onEscape(Math.max(0, this.escapeTime));
-      if (room.exitZone && Math.abs(player.pos.x - room.exitZone.x) < room.exitZone.r && player.pos.z > room.exitZone.z - room.exitZone.r) {
-        this._win(ctx); return;
+      if (player.pos.y < (room.trackBaseY != null ? room.trackBaseY : -3) - 9) {
+        this._fail(ctx, 'You drove off the edge of the Aureole and into the dark.'); return;
       }
-      if (this.escapeTime <= 0) { this._fail(ctx, 'The Aureole fired. There was no other side of the gap.'); return; }
+      const sz = room.shipZone;
+      if (sz && player.pos.z > sz.z && Math.abs(player.pos.x - sz.x) < sz.halfW) { this._win(ctx); return; }
     }
 
     // clear check
     if (!room.cleared) {
       const enemiesLeft = room.enemies.filter((e) => !e.dead).length;
       const objectivesDone = room.reactorDone && room.bossDead;
-      if (enemiesLeft === 0 && objectivesDone) {
+      // A boss room is cleared by defeating the boss alone. The boss spawns adds
+      // faster than they can always be mopped up, and a stray add can wander out
+      // of reach — neither should soft-lock the finale's drive segment. Ordinary
+      // rooms still require a full sweep.
+      const cleared = room.seg.event === 'boss' ? room.bossDead : (enemiesLeft === 0 && objectivesDone);
+      if (cleared) {
         room.cleared = true;
         this._openDoor(room, ctx);
         // last non-escape room with no door = win on clear

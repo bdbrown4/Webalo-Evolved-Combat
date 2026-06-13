@@ -597,6 +597,7 @@ export class Game {
     const hs = this.player.hudState();
     hs.scoped = scoped;
     hs.scopeZoom = scoped ? this.player.weapon.def.adsZoom : 0;
+    hs.driving = this.player.driving;
     if (hs.dmgSfx) this.audio.sfx(hs.dmgSfx);
 
     // enemies
@@ -624,6 +625,7 @@ export class Game {
 
     // HUD
     this.hud.update(dt, hs, this.enemies, this.player);
+    this.hud.setTurret(this.vehicle ? { x: this.vehicle.aim.x, y: this.vehicle.aim.y, locked: !!this.vehicle.lockedTarget } : null);
 
     // player death
     if (this.player.dead && this.state === 'playing') ctx.onFail('Sgt. Orion is down. The eulogy will have to wait.');

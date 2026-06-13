@@ -9,6 +9,9 @@ export class Physics {
   constructor() {
     this.colliders = []; // { min: Vector3, max: Vector3, tag }
     this.gravity = -22;
+    // A safety floor that catches anything that falls through the geometry. The
+    // open escape track drops this into the void so you can actually fall off.
+    this.floorY = 0;
   }
 
   clear() { this.colliders.length = 0; }
@@ -34,8 +37,8 @@ export class Physics {
     // ---- Y axis ----
     pos.y += vel.y * dt;
     out.grounded = this._resolveAxis(pos, vel, radius, height, 'y');
-    // world floor at y=0 as a safety net
-    if (pos.y < 0) { pos.y = 0; if (vel.y < 0) vel.y = 0; out.grounded = true; }
+    // world floor (default y=0) as a safety net; lowered to a void on the track
+    if (pos.y < this.floorY) { pos.y = this.floorY; if (vel.y < 0) vel.y = 0; out.grounded = true; }
     return out;
   }
 

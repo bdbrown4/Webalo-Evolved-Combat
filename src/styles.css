@@ -104,10 +104,11 @@ html, body {
   display: flex; align-items: center; justify-content: center;
   pointer-events: auto;
 }
-/* fade the top of the field into deep space so the crawl recedes */
+/* fade ONLY the top third into deep space, so text vanishes as it recedes but
+   stays bright and readable through the middle and lower screen */
 .crawl-scene::before {
-  content: ''; position: absolute; left: 0; right: 0; top: 0; height: 58%;
-  background: linear-gradient(180deg, #02040a 12%, rgba(2,4,10,0.85) 38%, transparent 100%);
+  content: ''; position: absolute; left: 0; right: 0; top: 0; height: 32%;
+  background: linear-gradient(180deg, #02040a 22%, transparent 100%);
   z-index: 3; pointer-events: none;
 }
 .crawl-prelude {
@@ -119,12 +120,12 @@ html, body {
 }
 @keyframes crawl-prelude { 0%,8% { opacity: 0; } 22%,60% { opacity: 1; } 88%,100% { opacity: 0; } }
 
-.crawl-viewport { position: absolute; inset: 0; perspective: 360px; perspective-origin: 50% 32%; overflow: hidden; }
+.crawl-viewport { position: absolute; inset: 0; perspective: 520px; perspective-origin: 50% 38%; overflow: hidden; }
 /* The tilt lives on a full-screen plane that pivots at the BOTTOM of the
    viewport, so the text recedes up toward a fixed vanishing point. (Tilting the
    tall text block about its own top instead makes its lower lines swing through
    the vanishing point and fold/mirror — the artifact we're avoiding.) */
-.crawl-3d { position: absolute; inset: 0; transform: rotateX(34deg); transform-origin: 50% 100%; transform-style: preserve-3d; }
+.crawl-3d { position: absolute; inset: 0; transform: rotateX(29deg); transform-origin: 50% 100%; transform-style: preserve-3d; }
 .crawl-text {
   position: absolute; top: 100%; left: 50%; width: min(680px, 84vw);
   transform: translate(-50%, 0); /* JS animates the translateY (see Menus.showIntro) */

@@ -116,7 +116,7 @@ export class Menus {
     }
     const vh = window.innerHeight || 800;
     const distance = vh + text.scrollHeight + 80;  // rise from below to fully clear the top
-    const speed = 50;                              // px/sec — calm, readable pace (slower than before)
+    const speed = 44;                              // px/sec — calm, readable pace (slower than before)
     const durMs = (distance / speed) * 1000;
     const anim = text.animate(
       [{ transform: 'translate(-50%, 0)' }, { transform: `translate(-50%, ${-distance}px)` }],

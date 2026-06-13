@@ -36,6 +36,7 @@ export class Player {
     this.grenadeType = 'frag';
     this.cooking = null;     // { sticky, fuse, max } while a primed grenade is held
     this.nadeEvent = null;   // 'thrown' | 'cancelled' — consumed by Game for the hand anim
+    this.meleeEvent = false;  // set on a melee swing — consumed by Game for the fist anim
     this._cookBeep = 0;
     this.meleeCd = 0;
     this.driving = false;       // true while mounted in a Vehicle (escape finale)
@@ -212,7 +213,7 @@ export class Player {
     if (input.pressed('weapon2') && this.selectWeapon(1)) ctx.audio && ctx.audio.sfx('swap');
     if (input.pressed('nadeswap')) { this.cycleGrenade(); ctx.audio && ctx.audio.sfx('ui'); }
     if (input.pressed('reload') && this.weapon) { if (this.weapon.startReload()) ctx.audio && ctx.audio.sfx('reload'); }
-    if (input.pressed('melee') && this.meleeCd <= 0) this._melee(ctx);
+    if (input.pressed('melee') && this.meleeCd <= 0 && !this.cooking) this._melee(ctx); // no pistol-whip mid-cook
     if (input.pressed('grenade')) this._primeGrenade(ctx);
     if (this.cooking) this._updateCook(dt, input, ctx);
 
@@ -303,6 +304,7 @@ export class Player {
 
   _melee(ctx) {
     this.meleeCd = 0.6;
+    this.meleeEvent = true; // Game plays the fist-jab view-model
     ctx.audio && ctx.audio.sfx('melee');
     const origin = this.headPoint(), dir = this.lookDir();
     for (const e of ctx.enemies) {

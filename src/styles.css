@@ -97,6 +97,58 @@ html, body {
 .menu-footer a { color: var(--hud-cyan); text-decoration: none; pointer-events: auto; }
 .menu-footer a:hover { text-decoration: underline; }
 
+/* ---------- Opening crawl ---------- */
+.crawl-scene {
+  position: fixed; inset: 0; z-index: 30;
+  background: #02040a; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+  pointer-events: auto;
+}
+/* fade the top of the field into deep space so the crawl recedes */
+.crawl-scene::before {
+  content: ''; position: absolute; left: 0; right: 0; top: 0; height: 58%;
+  background: linear-gradient(180deg, #02040a 12%, rgba(2,4,10,0.85) 38%, transparent 100%);
+  z-index: 3; pointer-events: none;
+}
+.crawl-prelude {
+  position: absolute; top: 32%; left: 50%; transform: translate(-50%, -50%);
+  width: min(680px, 82vw); text-align: center;
+  color: var(--hud-cyan); font-size: clamp(16px, 2.4vw, 24px); line-height: 1.6;
+  letter-spacing: 1px; z-index: 4; opacity: 0;
+  animation: crawl-prelude 6s ease-in-out forwards;
+}
+@keyframes crawl-prelude { 0%,8% { opacity: 0; } 22%,60% { opacity: 1; } 88%,100% { opacity: 0; } }
+
+.crawl-viewport { position: absolute; inset: 0; perspective: 420px; overflow: hidden; }
+.crawl-text {
+  position: absolute; top: 100%; left: 50%; width: min(640px, 78vw);
+  transform: translateX(-50%) rotateX(26deg); transform-origin: 50% 0%;
+  color: var(--hud-amber); font-weight: 650; font-size: clamp(17px, 2.3vw, 26px);
+  line-height: 1.7; text-align: justify;
+  animation: crawl-scroll 46s linear 4s forwards;
+}
+.crawl-text p { margin: 0 0 1.3em; text-shadow: 0 0 14px rgba(255,180,84,0.25); }
+.crawl-text b { color: #ffe6b0; }
+.crawl-logo {
+  text-align: center; font-size: clamp(60px, 15vw, 150px); font-weight: 900;
+  letter-spacing: 8px; line-height: 0.9; margin-bottom: 8px;
+  background: linear-gradient(180deg, #d9f6ff, #5fd0e6 55%, #2c8aa6);
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+}
+.crawl-ep {
+  text-align: center; color: var(--ink); font-size: clamp(16px, 2.2vw, 26px);
+  letter-spacing: 8px; text-transform: uppercase; margin-bottom: 1.6em;
+}
+@keyframes crawl-scroll { 0% { top: 100%; } 100% { top: -210%; } }
+.crawl-skip { position: absolute; right: 22px; bottom: 20px; z-index: 5; padding: 8px 16px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .crawl-text { animation: none; position: static; transform: none; max-height: 86vh; overflow-y: auto; margin: 6vh auto; }
+  .crawl-prelude { animation: none; opacity: 1; position: static; transform: none; margin-top: 4vh; }
+  .crawl-scene { flex-direction: column; }
+  .crawl-scene::before { display: none; }
+}
+
 /* ---------- Settings panel ---------- */
 .panel {
   pointer-events: auto;

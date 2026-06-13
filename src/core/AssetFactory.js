@@ -61,6 +61,25 @@ export const AssetFactory = {
     return g;
   },
 
+  // First-person gloved fist, shown for a quick jab on the melee action.
+  fistViewModel() {
+    const g = new THREE.Group();
+    const sleeve = new THREE.Mesh(new THREE.CapsuleGeometry(0.075, 0.42, 4, 8), mat(0x3a4030, { rough: 0.9 }));
+    sleeve.rotation.x = Math.PI / 2; sleeve.position.set(0, -0.01, 0.24);
+    const wrist = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.15, 0.12), mat(0x23261e, { rough: 0.8 }));
+    wrist.position.set(0, 0, 0.02);
+    const knuckles = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.13, 0.1), mat(0x2b2f24, { rough: 0.75 }));
+    knuckles.position.set(0, 0.005, -0.08);
+    g.add(sleeve, wrist, knuckles);
+    for (let i = 0; i < 4; i++) {
+      const kn = new THREE.Mesh(new THREE.SphereGeometry(0.026, 8, 8), mat(0x33372a, { rough: 0.7 }));
+      kn.position.set(-0.066 + i * 0.044, 0.04, -0.13);
+      g.add(kn);
+    }
+    g.traverse((o) => { if (o.isMesh) { o.castShadow = false; o.frustumCulled = false; } });
+    return g;
+  },
+
   // First-person grenade hand, shown while a grenade is primed ("cooking").
   grenadeViewModel(sticky) {
     const g = new THREE.Group();

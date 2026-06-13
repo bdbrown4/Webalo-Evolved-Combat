@@ -52,12 +52,54 @@ export class Menus {
     this.el.querySelectorAll('[data-act]').forEach((b) => b.addEventListener('click', () => {
       this._click();
       const a = b.dataset.act;
-      if (a === 'new') this.h.onStart(0);
+      if (a === 'new') this.showIntro(() => this.h.onStart(0));
       else if (a === 'continue') this.h.onStart(loadProgress().unlocked);
       else if (a === 'select') this.showMissionSelect();
       else if (a === 'settings') this.showSettings('controls', () => this.showMain());
       else if (a === 'credits') this.showCredits();
     }));
+  }
+
+  // ---------------- Opening crawl ----------------
+  // A Star Wars-style perspective crawl that plays before a new campaign.
+  // Skippable at any time (click Skip, or press Esc / Space / Enter).
+  showIntro(onDone) {
+    this.clear();
+    this.screen = 'intro';
+    this.audio.ensure();
+    this.audio.setTrack('ambient');
+
+    let done = false;
+    const finish = () => {
+      if (done) return; done = true;
+      window.removeEventListener('keydown', onKey, true);
+      this.clear();
+      onDone && onDone();
+    };
+    const onKey = (e) => {
+      if (['Escape', 'Space', 'Enter'].includes(e.code)) { e.preventDefault(); finish(); }
+    };
+
+    this.el.innerHTML = `
+      <div class="crawl-scene interactive">
+        <div class="crawl-prelude">A frontier gone quiet. A distress call that should never have been answered.</div>
+        <div class="crawl-viewport">
+          <div class="crawl-text">
+            <div class="crawl-logo">WEBALO</div>
+            <div class="crawl-ep">Evolved Combat</div>
+            <p>When the lost <b>Vanguard fleet</b> vanished chasing a distress call from the edge of charted space, command wrote them off. The signal kept pulsing.</p>
+            <p>Its source was the <b>AUREOLE</b> — a ringworld older than memory, encircled by the <b>WOBBLE COALITION</b>: a swarm of googly-eyed zealots who tend its ancient machinery and worship the ring as a friend. They have no idea what it was built to cage.</p>
+            <p>One dropship answered the call. Only Sergeant <b>VANCE ORION</b> walked away from the crash — a lone marine, a cracked AI named <b>IRIS</b>, and a structure the size of a nightmare charging toward something terrible.</p>
+            <p>The Coalition thinks he is trespassing. He intends to prove them right.</p>
+          </div>
+        </div>
+        <button class="btn ghost crawl-skip" data-act="skip">Skip ▸</button>
+      </div>`;
+
+    const text = this.el.querySelector('.crawl-text');
+    text.addEventListener('animationend', finish);
+    this.el.querySelector('[data-act="skip"]').addEventListener('click', () => { this._click(); finish(); });
+    window.addEventListener('keydown', onKey, true);
   }
 
   showCredits() {

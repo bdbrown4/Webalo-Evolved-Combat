@@ -222,6 +222,7 @@ export class Game {
     if (this.vehicle) { this.scene.remove(this.vehicle.mesh); this.vehicle = null; }
     if (this.player) this.player.driving = false;
     this._clearNadeModel();
+    this._clearMeleeModel();
     if (this._viewModel) this._viewModel.visible = true;
     if (this.level) { this.scene.remove(this.level.group); this.level.dispose(); this.level = null; }
     for (const e of this.enemies) this.scene.remove(e.mesh);
@@ -329,9 +330,10 @@ export class Game {
     this.state = 'result';
     this.input.setEnabled(false); this.input.exitLock();
     this.hud.clearTransients();
-    // drop a held grenade hand and restore the weapon so neither freezes
-    // on screen under the result banner (death/win can land mid-cook)
+    // drop a held grenade hand / mid-jab fist and restore the weapon so none
+    // freeze on screen under the result banner (death/win can land mid-action)
     this._clearNadeModel();
+    this._clearMeleeModel();
     if (this._viewModel) this._viewModel.visible = !this.player.driving;
     this.audio.sfx('win');
     markCompleted(this.missionIndex);
@@ -347,6 +349,7 @@ export class Game {
     this.input.setEnabled(false); this.input.exitLock();
     this.hud.clearTransients();
     this._clearNadeModel();
+    this._clearMeleeModel();
     if (this._viewModel) this._viewModel.visible = !this.player.driving;
     this.audio.sfx('lose');
     this.hud.banner('DOWN', reason || 'You fell on the Aureole.', 2.5);
@@ -451,6 +454,28 @@ export class Game {
     this._nadeThrowT = 0;
   }
 
+  // First-person fist: a quick forward jab on melee, then retract and remove.
+  _updateMeleeModel(dt) {
+    if (this.player.meleeEvent) {
+      this.player.meleeEvent = false;
+      this._meleeT = 0;
+      if (!this._meleeModel) { this._meleeModel = AssetFactory.fistViewModel(); this.camera.add(this._meleeModel); }
+    }
+    if (!this._meleeModel) return;
+    this._meleeT += dt;
+    const T = 0.32, p = this._meleeT / T;
+    if (p >= 1) { this._clearMeleeModel(); return; }
+    const punch = Math.sin(Math.min(1, p) * Math.PI); // 0 → 1 → 0
+    this._meleeModel.position.set(0.18 - punch * 0.14, -0.34 + punch * 0.16, -0.32 - punch * 0.46);
+    this._meleeModel.rotation.x = -0.35 + punch * 0.35;
+    this._meleeModel.rotation.z = (1 - punch) * 0.4;
+  }
+
+  _clearMeleeModel() {
+    if (this._meleeModel) { this.camera.remove(this._meleeModel); this._meleeModel = null; }
+    this._meleeT = 0;
+  }
+
   _setViewModel(key) {
     if (this._vmKey === key) return;
     if (this._viewModel) this.camera.remove(this._viewModel);
@@ -507,17 +532,28 @@ export class Game {
     }
     this._setViewModel(this.player.weapon ? this.player.weapon.key : null);
     this._updateNadeModel(dt);
+    this._updateMeleeModel(dt);
 
-    // weapon viewmodel kick + sway (hidden while scoped or holding a grenade)
+    // weapon viewmodel kick + sway (hidden while scoped, punching, or holding a grenade)
     if (this._viewModel) {
-      this._viewModel.visible = !scoped && !this.player.driving && !this._nadeModel;
+      this._viewModel.visible = !scoped && !this.player.driving && !this._nadeModel && !this._meleeModel;
+      // reload pose: dip the gun down and roll it in toward the magazine,
+      // following the reload timer so it eases out and back on its own
+      const w = this.player.weapon;
+      let dip = 0, roll = 0;
+      if (w && w.reloading > 0) {
+        const p = Math.max(0, Math.min(1, 1 - w.reloading / w.def.reloadTime));
+        const s = Math.sin(p * Math.PI);
+        dip = s * 0.22; roll = s * 0.6;
+      }
       const target = -0.6 - (this._vmKick || 0);
       this._viewModel.position.z += (target - this._viewModel.position.z) * Math.min(1, dt * 18);
       if (this._vmKick) this._vmKick = Math.max(0, this._vmKick - dt * 0.8);
       const adsing = this.settings._adsActive;
       this._viewModel.position.x += ((adsing ? 0.0 : 0.28) - this._viewModel.position.x) * Math.min(1, dt * 10);
-      this._viewModel.position.y += ((adsing ? -0.16 : -0.26) - this._viewModel.position.y) * Math.min(1, dt * 10);
+      this._viewModel.position.y += (((adsing ? -0.16 : -0.26) - dip) - this._viewModel.position.y) * Math.min(1, dt * 10);
       this._viewModel.rotation.x += (0 - this._viewModel.rotation.x) * Math.min(1, dt * 10);
+      this._viewModel.rotation.z += (roll - this._viewModel.rotation.z) * Math.min(1, dt * 12);
     }
     if (this._muzzleLight.intensity > 0) this._muzzleLight.intensity = Math.max(0, this._muzzleLight.intensity - dt * 200);
 

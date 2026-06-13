@@ -20,6 +20,42 @@ is synthesized with the Web Audio API. Clone it and the whole game is here.
 > no third-party game assets and is not affiliated with or endorsed by any
 > other game's rights holders.
 
+## Story
+
+> *When the lost **Vanguard fleet** vanished chasing a distress call from the
+> edge of charted space, command wrote them off. The signal kept pulsing.*
+>
+> *Its source was the **Aureole** — a ringworld older than memory, encircled by
+> the **Wobble Coalition**: a swarm of googly-eyed zealots who tend its ancient
+> machinery and worship the ring as a friend. They have no idea what it was
+> built to cage.*
+>
+> *One dropship answered the call. Only Sergeant **Vance Orion** walked away
+> from the crash — a lone marine, a cracked AI named **IRIS**, and a structure
+> the size of a nightmare charging toward something terrible.*
+>
+> *The Coalition thinks he is trespassing. He intends to prove them right.*
+
+The Aureole was never a refuge. The "distress beacon" was bait, and every
+reactor Orion lights to survive only winds the ring closer to firing. Across
+eight missions he fights down through maintenance tunnels, data vaults, and a
+splitting throne-concourse — heckled the whole way by IRIS — toward the thing
+holding it all together: **Supreme Jiggler Pomplemoose**, a billion googly eyes
+welded into the dying core, absolutely certain everything is fine.
+
+The opening crawl plays in-game when you start a **New Campaign** (skippable),
+and the full arc unfolds through mission briefings and in-mission dialogue.
+
+The cast:
+
+- **Sgt. Vance Orion** ("Vanguard") — the last marine standing, dry as ash.
+- **IRIS** — the salvaged ship AI; sardonic, fond of statistics and eulogies.
+- **The Wobble Coalition** — Blorks, Gurgs, Wobblers, and hovering Floaters;
+  earnest, disorganized, and deeply attached to paperwork (see Quivermaster
+  Sprocket and his missing memo three).
+- **Supreme Jiggler Pomplemoose** — the finale boss, fused to the reactor it is
+  enthusiastically destroying.
+
 ## Quick start
 
 ```bash

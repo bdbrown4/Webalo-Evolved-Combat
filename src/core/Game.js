@@ -279,8 +279,12 @@ export class Game {
         onMuzzleFlash: (def) => this._muzzle(def),
         onHitmark: () => this.hud.hitMark(),
         shake: (a) => { this.shakeAmt = Math.max(this.shakeAmt, a); },
-        // '[Interact]' in prompt text is replaced with the player's actual binding
-        setPrompt: (t) => this.hud.setPrompt(t && t.replace('[Interact]', 'Press ' + codeLabel(this.settings.bindings.interact) + ' —')),
+        // '[Interact]' in prompt text is replaced with the binding (or a tap hint
+        // on touch); the contextual Use button also follows the prompt.
+        setPrompt: (t) => {
+          if (this.touch) this.touch.setInteract(!!t);
+          this.hud.setPrompt(t && t.replace('[Interact]', this.isTouch ? 'Tap USE —' : 'Press ' + codeLabel(this.settings.bindings.interact) + ' —'));
+        },
         interactPressed: false,
         onObjective: (t) => this.hud.setObjective(t),
         onDialogue: (lines) => this.hud.queueDialogue(lines),
@@ -551,6 +555,48 @@ export class Game {
     else this.renderer.render(this.scene, this.camera);
   }
 
+  // Touch on-foot auto-aim. Tapping an enemy LOCKS it and swings the gun onto it
+  // (and keeps tracking it as it moves — we follow the locked enemy, not whatever
+  // is under the finger, which slides away as the view centres). Drag the finger
+  // to a new spot to re-target; with nothing there, the finger steers a free look.
+  _touchAimFoot(dt) {
+    const pt = this.touch.aimPt, p = this.player;
+    if (!p || p.dead) return;
+    this.camera.updateMatrixWorld();
+    const moved = !this._touchAcqPt || Math.hypot(pt.x - this._touchAcqPt.x, pt.y - this._touchAcqPt.y) > 0.16;
+    if (!this._touchTarget || this._touchTarget.dead || moved) {
+      let best = null, bestD = 0.26;
+      const v = new THREE.Vector3();
+      for (const e of this.enemies) {
+        if (e.dead) continue;
+        v.copy(e.aimPoint()).project(this.camera);
+        if (v.z > 1) continue;
+        const d = Math.hypot(v.x - pt.x, v.y - pt.y);
+        if (d < bestD) { bestD = d; best = e; }
+      }
+      if (best) { this._touchTarget = best; this._touchAcqPt = { x: pt.x, y: pt.y }; }
+      else if (moved) this._touchTarget = null; // finger over empty space
+    }
+    const tgt = (this._touchTarget && !this._touchTarget.dead) ? this._touchTarget : null;
+    if (tgt) {
+      const dir = new THREE.Vector3().subVectors(tgt.aimPoint(), p.headPoint());
+      const dist = dir.length(); if (dist < 0.001) return;
+      const desiredYaw = Math.atan2(dir.x, dir.z);
+      const desiredPitch = Math.asin(Math.max(-1, Math.min(1, dir.y / dist)));
+      let dyaw = desiredYaw - p.yaw;
+      while (dyaw > Math.PI) dyaw -= Math.PI * 2; while (dyaw < -Math.PI) dyaw += Math.PI * 2;
+      const k = Math.min(1, dt * 14);
+      p.yaw += dyaw * k;
+      p.pitch += (desiredPitch - p.pitch) * k;
+    } else {
+      const turn = dt * 1.9;
+      p.yaw += pt.x * turn;
+      p.pitch += pt.y * turn;
+      const lim = Math.PI / 2 - 0.02;
+      p.pitch = Math.max(-lim, Math.min(lim, p.pitch));
+    }
+  }
+
   _updatePlay(dt) {
     this.input.beginFrame();
     const ctx = this._ctx();
@@ -562,9 +608,19 @@ export class Game {
     if (scoped !== this._scoped) { this._scoped = scoped; this.audio.sfx(scoped ? 'scopein' : 'scopeout'); }
 
     this.player.update(dt, this.input, this.settings, ctx);
+    const touchAim = this.isTouch && this.touch && this.touch.aimActive;
     if (this.vehicle) {
+      if (touchAim) { this.vehicle.aim.x = this.touch.aimPt.x; this.vehicle.aim.y = this.touch.aimPt.y; } // reticle follows finger
       this.vehicle.update(dt, this.input, ctx);
       this.player.pos.copy(this.vehicle.pos);
+    } else if (touchAim) {
+      this._touchAimFoot(dt);            // turn the view toward the locked enemy
+    } else {
+      this._touchTarget = null; this._touchAcqPt = null; // finger up: drop the lock
+    }
+    // touch QoL: auto-reload a dry magazine
+    if (this.isTouch && this.player.weapon && this.player.weapon.needsReload() && this.player.weapon.reloading <= 0) {
+      if (this.player.weapon.startReload()) this.audio.sfx('reload');
     }
     this._setViewModel(this.player.weapon ? this.player.weapon.key : null);
     this._updateNadeModel(dt);

@@ -10,6 +10,14 @@ import { Menus } from './ui/Menus.js';
 const canvas = document.getElementById('game-canvas');
 const root = document.getElementById('ui-root');
 
+// Kill mobile zoom entirely — this is a game, not a document. iOS Safari ignores
+// `user-scalable=no`, so we also swallow its pinch (gesture*) events and any
+// stray multi-touch zoom. (`touch-action: manipulation` in CSS handles
+// double-tap zoom; menus keep their own vertical scrolling.)
+['gesturestart', 'gesturechange', 'gestureend'].forEach((ev) =>
+  document.addEventListener(ev, (e) => e.preventDefault(), { passive: false }));
+document.addEventListener('touchmove', (e) => { if (e.touches && e.touches.length > 1) e.preventDefault(); }, { passive: false });
+
 const settings = new Settings();
 const audio = new Audio(settings);
 const input = new Input(canvas, settings);

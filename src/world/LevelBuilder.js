@@ -309,9 +309,10 @@ export class LevelBuilder {
     this._spawnRoom(room, ctx);
     if (room.seg.event === 'vehicle-escape') {
       this.inEscape = true;
+      this.escapeTime = 42;       // beat the collapsing ring to the Vanguard
       this.physics.floorY = -300; // open the void: drive off the road and you fall
       ctx.onMountVehicle && ctx.onMountVehicle();
-      ctx.onBanner && ctx.onBanner('DRIVE', 'No guardrails. Reach the Vanguard — aim to let IRIS clear the Wobble.', 2.4);
+      ctx.onBanner && ctx.onBanner('DRIVE', 'No guardrails, no time. Reach the Vanguard — Fire / right-click the turret.', 2.6);
     }
     ctx.audio && ctx.audio.sfx('objective');
   }
@@ -323,16 +324,23 @@ export class LevelBuilder {
     // types float beside the lip; grounded types ride the tiles.
     if (room.seg.event === 'vehicle-escape' && room.trackSpawnPoints) {
       const pts = room.trackSpawnPoints;
-      let slot = 7;
+      const first = 5, last = pts.length - 3, span = Math.max(1, last - first);
       for (const grp of room.seg.enemies) {
+        // air types hold station as hovering targets beside the lip; ground
+        // types ride the road centreline so you can drive straight over them.
+        const air = grp.type === 'floater' || grp.type === 'wobbler';
         for (let n = 0; n < grp.count; n++) {
-          const p = pts[Math.min(pts.length - 3, slot)]; slot += 2;
-          const off = ((n % 2) ? 1 : -1) * (3 + Math.random() * 4);
-          const e = ctx.spawnEnemy(grp.type, new THREE.Vector3(p.x + off, p.y + 3.0, p.z));
-          // Force every track Wobble to hover so they hold station as turret
-          // targets instead of backing off the lip and tumbling into the void.
-          e.hover = true;
-          room.enemies.push(e);
+          const f = grp.count > 1 ? n / (grp.count - 1) : 0.5;          // spread the group along the road
+          const p = pts[Math.round(first + f * span)];
+          if (air) {
+            const off = ((n % 2) ? 1 : -1) * (3 + Math.random() * 5);
+            const e = ctx.spawnEnemy(grp.type, new THREE.Vector3(p.x + off, p.y + 3.0 + Math.random() * 2, p.z));
+            e.hover = true;
+            room.enemies.push(e);
+          } else {
+            const e = ctx.spawnEnemy(grp.type, new THREE.Vector3(p.x + (Math.random() - 0.5) * 8, p.y + 0.3, p.z + (Math.random() - 0.5) * 6));
+            room.enemies.push(e);
+          }
         }
       }
       return;
@@ -384,13 +392,17 @@ export class LevelBuilder {
     // boss death tracking
     if (room.boss) room.bossDead = room.boss.dead;
 
-    // escape: fall off the open road -> death; reach the Vanguard hangar -> win
+    // escape: race the clock; fall off the open road -> death; reach the
+    // Vanguard hangar -> win; let the timer hit zero -> the ring takes you.
     if (this.inEscape && this.activeIndex === this.segments.length - 1) {
+      this.escapeTime -= dt;
+      ctx.onEscape && ctx.onEscape(Math.max(0, this.escapeTime));
       if (player.pos.y < (room.trackBaseY != null ? room.trackBaseY : -3) - 9) {
         this._fail(ctx, 'You drove off the edge of the Aureole and into the dark.'); return;
       }
       const sz = room.shipZone;
       if (sz && player.pos.z > sz.z && Math.abs(player.pos.x - sz.x) < sz.halfW) { this._win(ctx); return; }
+      if (this.escapeTime <= 0) { this._fail(ctx, 'Too slow. The Aureole fired and took the ring — and you — with it.'); return; }
     }
 
     // clear check

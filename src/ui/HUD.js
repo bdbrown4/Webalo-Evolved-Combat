@@ -172,7 +172,7 @@ export class HUD {
     if (this._bannerT > 0) { this._bannerT -= dt; if (this._bannerT <= 0) this.$('#banner').classList.add('hidden'); }
 
     // escape countdown shown in objective slot
-    if (this._escape != null) this.setObjective('ESCAPE — ' + this._escape.toFixed(1) + 's');
+    if (this._escape != null) this.setObjective('⚠ RING COLLAPSE — ' + this._escape.toFixed(1) + 's');
 
     // boss health bar (shown while a boss enemy is alive)
     const boss = enemies && enemies.find((e) => e.type === 'boss' && !e.dead);

@@ -106,6 +106,7 @@ export const AssetFactory = {
       wobbler: { color: 0x35c98f, size: 0.9,  eye: 0.18, antenna: true,  feet: true,  tall: true },
       floater: { color: 0xe8d24a, size: 0.4,  eye: 0.22, antenna: false, feet: false, hover: true },
       boss:    { color: 0xd83a6a, size: 1.8,  eye: 0.3,  antenna: true,  feet: true,  bulky: true },
+      sprocket:{ color: 0x2ec4b6, size: 1.3,  eye: 0.2,  antenna: false, feet: true,  tall: true },
     }[type] || { color: 0xff8a3d, size: 0.5, eye: 0.12, antenna: true, feet: true };
 
     const s = cfg.size;
@@ -153,9 +154,39 @@ export const AssetFactory = {
         g.add(arm);
       }
     }
-    // Wobblers carry a personal shield bubble
-    if (type === 'wobbler' || type === 'boss') {
-      const bub = new THREE.Mesh(new THREE.SphereGeometry(s * 1.35, 16, 12), mat(0x35c98f, { transparent: true, opacity: 0.18, emissive: 0x35c98f, emissiveIntensity: 0.4 }));
+    // Quivermaster Sprocket — a unique mini-boss: a crown of quills, a row of
+    // extra googly eyes, and a clanking sprocket-gear belt. Theatrical, like a
+    // discount Pomplemoose.
+    if (type === 'sprocket') {
+      for (let i = -2; i <= 2; i++) {                     // crown of quills
+        const a = i * 0.34;
+        const stalk = new THREE.Mesh(new THREE.ConeGeometry(s * 0.06, s * 0.95, 6), mat(0x222));
+        stalk.position.set(Math.sin(a) * s * 0.55, body.position.y + s * 1.05, 0);
+        stalk.rotation.z = -a;
+        const tip = new THREE.Mesh(new THREE.SphereGeometry(s * 0.1, 8, 8), mat(cfg.color, { emissive: cfg.color, emissiveIntensity: 1.0 }));
+        tip.position.set(Math.sin(a) * s * 0.95, body.position.y + s * 1.52, 0);
+        g.add(stalk, tip);
+      }
+      for (const ex of [-0.62, -0.21, 0.21, 0.62]) {       // a row of extra eyes
+        const e = googlyEye(cfg.eye * 0.7);
+        e.position.set(ex * s, body.position.y + s * 0.42, s * 0.78);
+        g.add(e);
+      }
+      const gear = new THREE.Mesh(new THREE.TorusGeometry(s * 1.0, s * 0.13, 6, 14), mat(0x9a8638, { metal: 0.6, rough: 0.4 }));
+      gear.rotation.x = Math.PI / 2; gear.position.y = body.position.y - s * 0.35;
+      g.add(gear);
+      for (let t = 0; t < 8; t++) {                        // gear teeth
+        const ang = (t / 8) * Math.PI * 2;
+        const tooth = new THREE.Mesh(new THREE.BoxGeometry(s * 0.18, s * 0.14, s * 0.18), mat(0x9a8638, { metal: 0.6 }));
+        tooth.position.set(Math.cos(ang) * s * 1.12, body.position.y - s * 0.35, Math.sin(ang) * s * 1.12);
+        g.add(tooth);
+      }
+    }
+
+    // Shielded units carry a personal shield bubble (tinted to their colour)
+    if (type === 'wobbler' || type === 'boss' || type === 'sprocket') {
+      const bc = type === 'sprocket' ? cfg.color : 0x35c98f;
+      const bub = new THREE.Mesh(new THREE.SphereGeometry(s * 1.35, 16, 12), mat(bc, { transparent: true, opacity: 0.18, emissive: bc, emissiveIntensity: 0.4 }));
       bub.position.y = body.position.y;
       g.add(bub); g.userData.shieldBubble = bub;
     }

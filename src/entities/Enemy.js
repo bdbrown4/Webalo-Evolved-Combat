@@ -33,8 +33,8 @@ export class Enemy {
     this.bossActT = 2;
     this.mesh = AssetFactory.enemy(type);
     this.mesh.position.copy(this.pos);
-    this.radius = type === 'boss' ? 3.0 : (this.meta.kind === 'charger' ? 1.0 : 0.55);
-    this.height = type === 'boss' ? 6 : (type === 'wobbler' ? 2.0 : 1.3);
+    this.radius = type === 'boss' ? 3.0 : type === 'sprocket' ? 1.1 : (this.meta.kind === 'charger' ? 1.0 : 0.55);
+    this.height = type === 'boss' ? 6 : type === 'sprocket' ? 3.4 : (type === 'wobbler' ? 2.0 : 1.3);
     this.hover = !!this.meta.hover;
   }
 
@@ -96,6 +96,7 @@ export class Enemy {
     if (this.state !== 'idle') {
       this.facing = Math.atan2(flat.x, flat.z);
       if (this.type === 'boss') this._boss(dt, ctx, dist, flat);
+      else if (this.meta.kind === 'sprocket') this._sprocket(dt, ctx, dist, flat);
       else if (this.meta.kind === 'ranged') this._ranged(dt, ctx, dist, flat);
       else if (this.meta.kind === 'charger') this._charger(dt, ctx, dist, flat);
       else this._melee(dt, ctx, dist, flat);
@@ -180,6 +181,46 @@ export class Enemy {
         ctx.player.takeDamage(this.meta.dmg, this.pos);
         ctx.shake && ctx.shake(0.5);
         ctx.audio && ctx.audio.sfx('gurg');
+      }
+    }
+  }
+
+  // Quivermaster Sprocket — a shielded, strafing mini-boss that cycles three
+  // tells: a fan of quill-shards, a summon of Bobbins drones, and a lobbed goo.
+  // Two phases: he gets twitchier under half health.
+  _sprocket(dt, ctx, dist, flat) {
+    this.state = 'miniboss';
+    const pref = 16;
+    let move = 0;
+    if (dist > pref + 4) move = this.speed; else if (dist < pref - 3) move = -this.speed;
+    const strafe = Math.sin(this.wobble * 0.4) * this.speed * 0.55; // sidestep to dodge
+    const right = new THREE.Vector3(flat.z, 0, -flat.x);
+    this.vel.x = flat.x * move + right.x * strafe;
+    this.vel.z = flat.z * move + right.z * strafe;
+
+    this.bossPhase = this.hp > this.maxHp * 0.5 ? 1 : 2;
+    this.bossActT -= dt;
+    if (this.bossActT <= 0) {
+      this.bossActT = Math.max(1.3, 2.6 - this.bossPhase * 0.5);
+      const pick = Math.floor(this.wobble) % 3;
+      const origin = this.aimPoint();
+      if (pick === 0) {
+        // quill fan
+        const n = this.bossPhase === 2 ? 3 : 2;
+        for (let i = -n; i <= n; i++) {
+          const dir = new THREE.Vector3().subVectors(ctx.player.headPoint(), origin).normalize();
+          dir.applyAxisAngle(new THREE.Vector3(0, 1, 0), i * 0.14);
+          ctx.spawnProjectile && ctx.spawnProjectile({ type: 'shard', owner: 'enemy', pos: origin, vel: dir.multiplyScalar(36), damage: 8, life: 4 });
+        }
+        ctx.audio && ctx.audio.sfx('stinger');
+      } else if (pick === 1 && ctx.requestSpawn) {
+        ctx.requestSpawn('floater', this.bossPhase === 2 ? 3 : 2, this.pos);
+        ctx.audio && ctx.audio.sfx('wobbler');
+      } else {
+        const dir = new THREE.Vector3().subVectors(ctx.player.headPoint(), origin).normalize();
+        const vel = dir.multiplyScalar(26); vel.y += 2.5;
+        ctx.spawnProjectile && ctx.spawnProjectile({ type: 'goo', owner: 'enemy', pos: origin, vel, damage: this.meta.dmg, gravity: -8, splash: 1.5, life: 4 });
+        ctx.audio && ctx.audio.sfx('goocaster');
       }
     }
   }

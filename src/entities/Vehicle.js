@@ -100,13 +100,23 @@ export class Vehicle {
     }
     this.lockedTarget = best;
 
+    // Manual turret: you aim, you pull the trigger. Hold Fire (left) or ADS
+    // (right-click) — on mobile, the FIRE button. The reticle locks the Wobble
+    // under it; a shot hits the lock, or fires a tracer where you're pointing.
     this.fireCd -= dt;
-    if (best && this.fireCd <= 0) {
-      this.fireCd = 0.22;
+    const shooting = input.isDown('fire') || input.isDown('ads');
+    if (shooting && this.fireCd <= 0) {
+      this.fireCd = 0.15;
       const muzzle = this.pos.clone().addScaledVector(nf, 0.6); muzzle.y += 2.0;
-      ctx.spawnTracer && ctx.spawnTracer(muzzle, best.aimPoint());
-      best.takeDamage(34, { source: this.pos });
-      ctx.onHitmark && ctx.onHitmark();
+      if (best) {
+        ctx.spawnTracer && ctx.spawnTracer(muzzle, best.aimPoint());
+        best.takeDamage(34, { source: this.pos });
+        ctx.onHitmark && ctx.onHitmark();
+      } else {
+        const aimW = new THREE.Vector3(this.aim.x, this.aim.y, 0.5).unproject(this.camera);
+        const dir = aimW.sub(this.camera.position).normalize();
+        ctx.spawnTracer && ctx.spawnTracer(muzzle, muzzle.clone().addScaledVector(dir, 80));
+      }
       ctx.audio && ctx.audio.sfx('rifle');
     }
   }

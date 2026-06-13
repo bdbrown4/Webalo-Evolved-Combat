@@ -215,16 +215,18 @@ export class LevelBuilder {
     }
     const end = pts[pts.length - 1];
 
-    // The Aureole, looming: vast rings the road threads through, a planet far
-    // below, tumbling debris, road lights. All decorative — no colliders.
+    // Vast Aureole rings the road threads cleanly THROUGH — centred on the path
+    // and facing down it, so you pass through the open hole, not the structure
+    // (the tube stays far off the road). Decorative; the on-road walls below are
+    // the things you actually steer around.
     const ringMat = new THREE.MeshStandardMaterial({ color: 0x6b7a92, metalness: 0.3, roughness: 0.6, emissive: 0x223347, emissiveIntensity: 0.4 });
-    for (let r = 0; r < 4; r++) {
-      const p = pts[Math.floor((r + 0.5) / 4 * N)];
-      const ring = new THREE.Mesh(new THREE.TorusGeometry(62 + r * 16, 3.5, 8, 50), ringMat);
-      ring.position.set(p.x + (r % 2 ? 34 : -34), 10, p.z + 18);
-      ring.rotation.set(1.4, r * 0.6, 0.3);
+    [6, 17, 28, 38].forEach((i, r) => {
+      const p = pts[Math.min(N - 1, i)];
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(26 + r * 7, 2.6, 8, 44), ringMat);
+      ring.position.set(p.x, 9, p.z + 4);
+      ring.rotation.set(0.12, 0, r % 2 ? 0.18 : -0.18); // hole faces +Z (down the road), slight tilt
       this.group.add(ring);
-    }
+    });
     const planet = new THREE.Mesh(new THREE.SphereGeometry(150, 24, 18),
       new THREE.MeshStandardMaterial({ color: 0x36284f, roughness: 1, emissive: 0x140e22, emissiveIntensity: 0.6 }));
     planet.position.set(150, -190, zStart + 200);
@@ -242,6 +244,29 @@ export class LevelBuilder {
       const l = new THREE.PointLight(accent.getHex(), 14, 30, 2);
       l.position.set(p.x, p.y + 4, p.z); this.group.add(l);
     }
+
+    // Ring-debris fallen across the road: SOLID walls (AABB) that block the
+    // centreline but leave a clear lane to one side. They alternate sides, so you
+    // slalom. Stored on the room so the drivability check can weave too.
+    room.obstacles = [];
+    const obsMat = new THREE.MeshStandardMaterial({ color: 0x46415e, roughness: 0.85, metalness: 0.2 });
+    [9, 14, 19, 24, 29, 34].forEach((i, k) => {
+      if (i >= N) return;
+      const p = pts[i];
+      const side = k % 2 ? 1 : -1;
+      const ox = p.x + side * 3.6, oz = p.z, W = 6, H = 5.5, D = 3.4;
+      const block = new THREE.Mesh(new THREE.BoxGeometry(W, H, D), obsMat);
+      block.position.set(ox, H / 2 - 0.3, oz); block.rotation.y = side * 0.18;
+      const arc = new THREE.Mesh(new THREE.TorusGeometry(2.6, 0.55, 6, 12, Math.PI * 1.2),
+        new THREE.MeshStandardMaterial({ color: 0x6b7a92, metalness: 0.4, roughness: 0.5, emissive: accent, emissiveIntensity: 0.35 }));
+      arc.position.set(ox, H - 0.2, oz); arc.rotation.set(Math.PI / 2, 0, side * 0.4);
+      const stripe = new THREE.Mesh(new THREE.BoxGeometry(W + 0.3, 0.45, D + 0.3),
+        new THREE.MeshStandardMaterial({ color: 0x0a0a12, emissive: accent, emissiveIntensity: 1.8 }));
+      stripe.position.set(ox, 0.55, oz);
+      this.group.add(block, arc, stripe);
+      physics.addBox({ x: ox, y: H / 2, z: oz }, { x: W, y: H, z: D }, 'wall');
+      room.obstacles.push({ z: oz, blockMinX: ox - W / 2 - 1.6, blockMaxX: ox + W / 2 + 1.6, clearX: p.x - side * 5.5 });
+    });
 
     // the Vanguard frigate at the end — drive into its hangar to win
     const ship = AssetFactory.vanguardShip();

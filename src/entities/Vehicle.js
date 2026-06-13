@@ -39,11 +39,14 @@ export class Vehicle {
     const speedFactor = Math.min(1, Math.abs(fwdSpeed) / 6);
     this.heading += steer * 2.4 * dt * speedFactor * (fwdSpeed < -0.1 ? -1 : 1);
 
-    // accelerate / coast / cap (reverse capped slower)
-    const accel = 24, drag = 9;
+    // accelerate / coast / cap (reverse capped slower). Hold Sprint (Shift, or
+    // a full-forward push on the mobile stick) to boost top speed + accel.
+    this.boosting = input.isDown('sprint');
+    const accel = this.boosting ? 40 : 24, drag = 9;
+    const topSpeed = this.boosting ? this.maxSpeed * 1.55 : this.maxSpeed;
     if (throttle !== 0) fwdSpeed += throttle * accel * dt;
     else fwdSpeed -= Math.sign(fwdSpeed) * Math.min(Math.abs(fwdSpeed), drag * dt);
-    fwdSpeed = Math.max(-this.maxSpeed * 0.4, Math.min(this.maxSpeed, fwdSpeed));
+    fwdSpeed = Math.max(-this.maxSpeed * 0.4, Math.min(topSpeed, fwdSpeed));
 
     const nf = this.forward();
     this.vel.x = nf.x * fwdSpeed;
@@ -82,7 +85,7 @@ export class Vehicle {
   // IRIS's turret: move the reticle with look input, lock onto the nearest Wobble
   // under it (in screen space), and auto-fire on a cooldown. Hitscan + tracer.
   _turret(dt, input, ctx, nf) {
-    const SENS = 0.0042;
+    const SENS = 0.0026; // calmer turret aim
     this.aim.x = Math.max(-0.92, Math.min(0.92, this.aim.x + input.mouseDX * SENS));
     this.aim.y = Math.max(-0.92, Math.min(0.92, this.aim.y - input.mouseDY * SENS));
 

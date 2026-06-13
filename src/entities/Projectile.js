@@ -18,6 +18,7 @@ export class Projectile {
     this.gravity = opts.gravity || 0;
     this.life = opts.life || 4;
     this.homing = opts.homing || false;
+    this.homingTarget = opts.homingTarget || null; // the locked aimed-at enemy (if any)
     this.shieldMult = opts.shieldMult || 1;
     this.dead = false;
     this.fuse = opts.fuse || null;    // grenades
@@ -46,15 +47,21 @@ export class Projectile {
     if (this._stuck) return;
 
     if (this.homing && ctx.enemies) {
-      let best = null, bestD = 28;
-      for (const e of ctx.enemies) {
-        if (e.dead) continue;
-        const d = e.pos.distanceTo(this.pos);
-        if (d < bestD) { bestD = d; best = e; }
+      // Chase the locked aimed-at target; if it's gone, re-acquire the nearest
+      // body (so a shot into a cluster keeps finding fresh Wobble).
+      let target = (this.homingTarget && !this.homingTarget.dead) ? this.homingTarget : null;
+      if (!target) {
+        this.homingTarget = null;
+        let bestD = 28;
+        for (const e of ctx.enemies) {
+          if (e.dead) continue;
+          const d = e.pos.distanceTo(this.pos);
+          if (d < bestD) { bestD = d; target = e; }
+        }
       }
-      if (best) {
-        const want = new THREE.Vector3().subVectors(best.aimPoint(), this.pos).normalize().multiplyScalar(this.vel.length());
-        this.vel.lerp(want, Math.min(1, dt * 4));
+      if (target) {
+        const want = new THREE.Vector3().subVectors(target.aimPoint(), this.pos).normalize().multiplyScalar(this.vel.length());
+        this.vel.lerp(want, Math.min(1, dt * 5));
       }
     }
 

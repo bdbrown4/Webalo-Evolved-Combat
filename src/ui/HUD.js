@@ -15,6 +15,11 @@ export class HUD {
       <div id="scope" class="hidden"><div class="scope-cross h"></div><div class="scope-cross v"></div><div class="scope-zoom"></div></div>
       <div class="objective"><div class="o-label">Objective</div><div class="o-text" id="o-text">—</div></div>
       <div id="boss-bar" class="hidden"><div class="bb-name"></div><div class="bb-track"><div class="bb-fill"></div></div><div class="bb-phase"></div></div>
+      <div id="miniboss-bar" class="hidden">
+        <div class="mb-head"><span class="mb-tag">◆ Mini-Boss</span><span class="mb-name"></span></div>
+        <div class="mb-bar mb-shield-bar"><div class="mb-shield"></div></div>
+        <div class="mb-bar mb-hp-bar"><div class="mb-hp"></div></div>
+      </div>
       <div class="vitals">
         <div class="label">Shields</div>
         <div class="bar shield" id="shield-bar"><div class="fill"></div></div>
@@ -179,6 +184,22 @@ export class HUD {
       bb.querySelector('.bb-phase').textContent = 'Phase ' + (boss.bossPhase || 1) + ' / 3';
     } else {
       bb.classList.add('hidden');
+    }
+
+    // mini-boss bar (Quivermaster Sprocket and kin). On foot only — the finale
+    // drive treats them as turret fodder, so no bar swings up mid-chase.
+    const mini = (!state.driving && enemies) ? enemies.find((e) => e.meta && e.meta.miniboss && !e.dead) : null;
+    const mb = this.$('#miniboss-bar');
+    if (mini) {
+      mb.classList.remove('hidden');
+      mb.querySelector('.mb-name').textContent = mini.meta.name;
+      mb.querySelector('.mb-hp').style.width = (100 * Math.max(0, mini.hp) / mini.maxHp) + '%';
+      this.$('.mb-shield-bar').style.opacity = mini.maxShield ? '1' : '0';
+      mb.querySelector('.mb-shield').style.width = (mini.maxShield ? 100 * Math.max(0, mini.shield) / mini.maxShield : 0) + '%';
+      if (!this._minibossOn) { this._minibossOn = true; this.banner('◆ MINI-BOSS', mini.meta.name, 2.0); }
+    } else {
+      mb.classList.add('hidden');
+      this._minibossOn = false;
     }
 
     this._drawTracker(enemies, player);

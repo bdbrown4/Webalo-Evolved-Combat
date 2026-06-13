@@ -28,7 +28,7 @@
 export const ENEMY_META = {
   blork:   { name: 'Blorkling',  hp: 14,  speed: 5.2, dmg: 6,  range: 2.0,  kind: 'melee',  scoreColor: 0xff8a3d },
   gurg:    { name: 'Gurglethud', hp: 90,  speed: 3.0, dmg: 28, range: 2.6,  kind: 'charger',scoreColor: 0x7d57c9 },
-  wobbler: { name: 'Quivermaster Sprocket', hp: 70, speed: 3.4, dmg: 12, range: 22, kind: 'ranged', shield: 60, scoreColor: 0x35c98f },
+  wobbler: { name: 'Quivermaster Sprocket', hp: 70, speed: 3.4, dmg: 12, range: 22, kind: 'ranged', shield: 60, miniboss: true, scoreColor: 0x35c98f },
   floater: { name: 'Bobbins',    hp: 26,  speed: 3.0, dmg: 10, range: 26,  kind: 'ranged', hover: true, scoreColor: 0xe8d24a },
   boss:    { name: 'Supreme Jiggler Pomplemoose', hp: 1400, speed: 1.6, dmg: 26, range: 30, kind: 'boss', shield: 0, scoreColor: 0xd83a6a },
 };

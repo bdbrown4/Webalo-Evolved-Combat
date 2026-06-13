@@ -191,24 +191,26 @@ export class LevelBuilder {
   // at the lost Vanguard frigate. AABB tiles overlap so the surface stays
   // continuous; the meander keeps each step's lateral shift under a half-tile.
   _buildEscapeTrack(room, zStart, mission, physics, accent) {
-    const STEP = 8, N = 40, TW = 14, TD = 13, THICK = 0.9;
+    const STEP = 8, N = 42, TW = 16, TD = 14, THICK = 0.9;
     const tileMat = new THREE.MeshStandardMaterial({ color: 0x2c2742, roughness: 0.95, metalness: 0.12 });
     const rimMat = new THREE.MeshStandardMaterial({ color: 0x0a0a12, emissive: accent, emissiveIntensity: 1.5 });
 
+    // The road is FLAT (y=0). AABB tiles at different heights would act as
+    // step-walls the arcade vehicle can't climb (it has no step-up), blocking the
+    // drive — so the drama comes from the meander and the void, not elevation.
     const pts = [];
     let z = zStart + 6;
     for (let i = 0; i < N; i++) {
-      const tail = Math.max(0, i - (N - 4)) / 4;            // straighten + flatten into the ship over the final tiles
-      const ph = i * 0.30;
-      const x = (1 - tail) * (Math.sin(ph) * 20 + Math.sin(ph * 0.43) * 12); // wind(0)=0: lines up with the door + resume spawn
-      const y = (1 - tail) * Math.sin(ph * 0.7) * 2.2;
-      this._box(tileMat, x, y - THICK / 2, z, TW, THICK, TD, physics, 'floor', true);
+      const tail = Math.max(0, i - (N - 4)) / 4;            // straighten into the ship over the final tiles
+      const ph = i * 0.24;
+      const x = (1 - tail) * (Math.sin(ph) * 16 + Math.sin(ph * 0.46) * 9); // gentle meander; wind(0)=0 lines up with the door
+      this._box(tileMat, x, -THICK / 2, z, TW, THICK, TD, physics, 'floor', true);
       for (const sx of [-1, 1]) {                            // glowing edge rims so the lip is readable in the dark
         const rim = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.5, TD), rimMat);
-        rim.position.set(x + sx * (TW / 2 - 0.15), y + 0.15, z);
+        rim.position.set(x + sx * (TW / 2 - 0.15), 0.15, z);
         this.group.add(rim);
       }
-      pts.push({ x, y, z });
+      pts.push({ x, y: 0, z });
       z += STEP;
     }
     const end = pts[pts.length - 1];
@@ -247,7 +249,7 @@ export class LevelBuilder {
     this.group.add(ship);
 
     room.shipZone = { x: end.x, z: end.z + 2, halfW: 5 }; // win on crossing into the hangar mouth
-    room.trackBaseY = -3;                                  // lowest road y; fall below this -> the void
+    room.trackBaseY = 0;                                   // flat road; fall below this (-9) -> the void
     room.zBack = end.z + 26;
     room.trackSpawnPoints = pts;                           // used to scatter Wobble along the road
   }

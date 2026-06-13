@@ -15,7 +15,7 @@ export class Vehicle {
     this.heading = 0;          // radians; forward = (sin, 0, cos) to match Player.yaw
     this.radius = 1.4;
     this.height = 1.6;
-    this.maxSpeed = 26;
+    this.maxSpeed = 18;
     this.mesh = AssetFactory.vehicle();
     this.mesh.position.copy(this.pos);
     this._spin = 0;
@@ -40,7 +40,7 @@ export class Vehicle {
     this.heading += steer * 2.4 * dt * speedFactor * (fwdSpeed < -0.1 ? -1 : 1);
 
     // accelerate / coast / cap (reverse capped slower)
-    const accel = 34, drag = 10;
+    const accel = 24, drag = 9;
     if (throttle !== 0) fwdSpeed += throttle * accel * dt;
     else fwdSpeed -= Math.sign(fwdSpeed) * Math.min(Math.abs(fwdSpeed), drag * dt);
     fwdSpeed = Math.max(-this.maxSpeed * 0.4, Math.min(this.maxSpeed, fwdSpeed));

@@ -236,10 +236,13 @@ export class Player {
     const origin = this.headPoint();
     if (def.mode === 'projectile') {
       const dir = this._spreadDir(def.spread);
+      // Homing shots lock onto whatever you're actually aiming at, not just the
+      // nearest body — the projectile falls back to nearest only if that target dies.
+      const homingTarget = def.homing ? this._aimTarget(origin, this.lookDir(), ctx) : null;
       ctx.spawnProjectile && ctx.spawnProjectile({
         type: def.projectile, owner: 'player', pos: origin,
         vel: dir.multiplyScalar(def.projectileSpeed), damage: def.damage,
-        splash: def.splash || 0, shieldMult: def.shieldMult || 1, homing: !!def.homing, life: 4,
+        splash: def.splash || 0, shieldMult: def.shieldMult || 1, homing: !!def.homing, homingTarget, life: 4,
       });
       return;
     }
@@ -251,6 +254,22 @@ export class Player {
       anyHit = anyHit || hit;
     }
     if (anyHit) { ctx.audio && ctx.audio.sfx('hitmark'); ctx.onHitmark && ctx.onHitmark(); }
+  }
+
+  // The enemy you're aiming at: the one whose direction best matches the look
+  // ray, within a soft cone. In a tight cluster this picks the most centred body;
+  // the homing projectile re-acquires nearest if that one dies (group sweep).
+  _aimTarget(origin, dir, ctx, minDot = 0.97) {
+    let best = null, bestDot = minDot;
+    for (const e of ctx.enemies) {
+      if (e.dead) continue;
+      const to = this._tmp.subVectors(e.aimPoint(), origin);
+      const dist = to.length();
+      if (dist < 0.001 || dist > 90) continue;
+      const dot = to.multiplyScalar(1 / dist).dot(dir);
+      if (dot > bestDot) { bestDot = dot; best = e; }
+    }
+    return best;
   }
 
   _spreadDir(spread) {

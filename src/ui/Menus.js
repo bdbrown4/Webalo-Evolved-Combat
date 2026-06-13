@@ -86,7 +86,6 @@ export class Menus {
       <div class="crawl-scene interactive">
         <div class="crawl-prelude">A frontier gone quiet. A distress call that should never have been answered.</div>
         <div class="crawl-viewport">
-          <div class="crawl-3d">
           <div class="crawl-text">
             <div class="crawl-logo">WEBALO</div>
             <div class="crawl-ep">Evolved Combat</div>
@@ -94,7 +93,6 @@ export class Menus {
             <p>Its source was the <b>AUREOLE</b> — a ringworld older than memory, encircled by the <b>WOBBLE COALITION</b>: a swarm of googly-eyed zealots who tend its ancient machinery and worship the ring as a friend. They have no idea what it was built to cage.</p>
             <p>One dropship answered the call. Only Sergeant <b>VANCE ORION</b> walked away from the crash — a lone marine, a cracked AI named <b>IRIS</b>, and a structure the size of a nightmare charging toward something terrible.</p>
             <p>The Coalition thinks he is trespassing. He intends to prove them right.</p>
-          </div>
           </div>
         </div>
         <button class="btn ghost crawl-skip" data-act="skip">Skip ▸</button>
@@ -115,12 +113,22 @@ export class Menus {
       return;
     }
     const vh = window.innerHeight || 800;
-    const distance = vh + text.scrollHeight + 80;  // rise from below to fully clear the top
-    const speed = 44;                              // px/sec — calm, readable pace (slower than before)
-    const durMs = (distance / speed) * 1000;
+    const contentH = text.scrollHeight;
+    const startTop = Math.round(vh * 0.9);             // first line rises in from the lower screen
+    const endTop = -(contentH + Math.round(vh * 0.2)); // last line clears the top
+    const speed = 40;                                   // px/sec of vertical travel (a tad slower)
+    const durMs = ((startTop - endTop) / speed) * 1000;
+    // Canonical crawl: scroll vertically via `top` while the plane tilts back
+    // and recedes into the distance via translateZ (pivoting at its own bottom).
+    // The recede is what makes it pan AWAY instead of leaning toward the camera.
     const anim = text.animate(
-      [{ transform: 'translate(-50%, 0)' }, { transform: `translate(-50%, ${-distance}px)` }],
-      { duration: durMs, delay: 2200, easing: 'linear', fill: 'forwards' },
+      [
+        { top: `${startTop}px`, transform: 'rotateX(19deg) translateZ(0px)' },
+        { top: `${endTop}px`, transform: 'rotateX(23deg) translateZ(-700px)' },
+      ],
+      // fill:both holds the start frame through the delay (no top:0 flash) and
+      // the end frame after finishing
+      { duration: durMs, delay: 2200, easing: 'linear', fill: 'both' },
     );
     anim.onfinish = finish;
     timer = setTimeout(finish, durMs + 3000); // safety net if onfinish doesn't fire

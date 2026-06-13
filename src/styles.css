@@ -104,13 +104,6 @@ html, body {
   display: flex; align-items: center; justify-content: center;
   pointer-events: auto;
 }
-/* fade ONLY the top third into deep space, so text vanishes as it recedes but
-   stays bright and readable through the middle and lower screen */
-.crawl-scene::before {
-  content: ''; position: absolute; left: 0; right: 0; top: 0; height: 32%;
-  background: linear-gradient(180deg, #02040a 22%, transparent 100%);
-  z-index: 3; pointer-events: none;
-}
 .crawl-prelude {
   position: absolute; top: 32%; left: 50%; transform: translate(-50%, -50%);
   width: min(680px, 82vw); text-align: center;
@@ -120,17 +113,21 @@ html, body {
 }
 @keyframes crawl-prelude { 0%,8% { opacity: 0; } 22%,60% { opacity: 1; } 88%,100% { opacity: 0; } }
 
-.crawl-viewport { position: absolute; inset: 0; perspective: 520px; perspective-origin: 50% 38%; overflow: hidden; }
-/* The tilt lives on a full-screen plane that pivots at the BOTTOM of the
-   viewport, so the text recedes up toward a fixed vanishing point. (Tilting the
-   tall text block about its own top instead makes its lower lines swing through
-   the vanishing point and fold/mirror — the artifact we're avoiding.) */
-.crawl-3d { position: absolute; inset: 0; transform: rotateX(29deg); transform-origin: 50% 100%; transform-style: preserve-3d; }
+.crawl-viewport {
+  position: absolute; inset: 0; overflow: hidden;
+  perspective: 480px; perspective-origin: 50% 45%;
+  /* Alpha-fade the top: the text DISSOLVES as it recedes (a true fade to the
+     scene behind, not a darkening overlay). Larger band = fades sooner. */
+  -webkit-mask-image: linear-gradient(to bottom, transparent 2%, #000 38%, #000 100%);
+  mask-image: linear-gradient(to bottom, transparent 2%, #000 38%, #000 100%);
+}
 .crawl-text {
-  position: absolute; top: 100%; left: 50%; width: min(680px, 84vw);
-  transform: translate(-50%, 0); /* JS animates the translateY (see Menus.showIntro) */
+  position: absolute; left: 0; right: 0; margin: 0 auto; top: 0;
+  width: min(680px, 84vw);
+  transform-origin: 50% 100%; /* pivot at the block's bottom (canonical crawl) */
   color: var(--hud-amber); font-weight: 650; font-size: clamp(18px, 2.4vw, 28px);
   line-height: 1.7; text-align: center;
+  /* `top` + transform (rotateX + translateZ) are animated in Menus.showIntro */
 }
 .crawl-text p { margin: 0 0 1.3em; text-align: justify; text-shadow: 0 0 14px rgba(255,180,84,0.25); }
 .crawl-text b { color: #ffe6b0; }
@@ -150,12 +147,10 @@ html, body {
 .crawl-skip { position: absolute; right: 22px; bottom: 20px; z-index: 5; padding: 8px 16px; }
 
 @media (prefers-reduced-motion: reduce) {
-  .crawl-viewport { position: static; perspective: none; overflow: visible; }
-  .crawl-3d { position: static; transform: none; }
-  .crawl-text { animation: none; position: static; transform: none; width: min(680px, 86vw); max-height: 84vh; overflow-y: auto; margin: 4vh auto; }
+  .crawl-viewport { position: static; perspective: none; overflow: visible; -webkit-mask-image: none; mask-image: none; }
+  .crawl-text { animation: none; position: static; transform: none; top: auto; width: min(680px, 86vw); max-height: 84vh; overflow-y: auto; margin: 4vh auto; }
   .crawl-prelude { animation: none; opacity: 1; position: static; transform: none; margin-top: 4vh; }
   .crawl-scene { flex-direction: column; }
-  .crawl-scene::before { display: none; }
 }
 
 /* ---------- Settings panel ---------- */

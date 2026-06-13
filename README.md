@@ -1,5 +1,7 @@
 # Webalo: Evolved Combat
 
+### ▶ [Play it in your browser](https://bdbrown4.github.io/Webalo-Evolved-Combat/)
+
 An **original, open-source, browser-based sci-fi FPS** in the spirit of the
 early-2000s console shooter: recharging energy shields, a strict two-weapon
 carry, cookable grenades, a scoped sidearm, a radar motion tracker, goofy
@@ -69,6 +71,17 @@ Build a static, deployable bundle (e.g. for GitHub Pages):
 npm run build    # outputs to ./dist
 npm run preview  # serve the built bundle locally
 ```
+
+### Hosting on GitHub Pages
+
+Every push to `main` is built and published automatically by the
+[`Deploy to GitHub Pages`](.github/workflows/deploy.yml) workflow — it runs
+`npm run build` and serves `./dist` at the
+[live URL](https://bdbrown4.github.io/Webalo-Evolved-Combat/). No manual
+deploy step is needed; `vite.config.js` sets `base: './'` so the bundle works
+from the project-site subpath. (One-time: the workflow enables Pages on its
+first run; if your org restricts that, set **Settings → Pages → Source** to
+*GitHub Actions* once.)
 
 ## Features
 

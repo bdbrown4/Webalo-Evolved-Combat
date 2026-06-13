@@ -84,6 +84,7 @@ export class Menus {
 
     this.el.innerHTML = `
       <div class="crawl-scene interactive">
+        <div class="crawl-stars" aria-hidden="true"><i class="crawl-star"></i></div>
         <div class="crawl-prelude">A frontier gone quiet. A distress call that should never have been answered.</div>
         <div class="crawl-viewport">
           <div class="crawl-text">
@@ -101,37 +102,65 @@ export class Menus {
     this.el.querySelector('[data-act="skip"]').addEventListener('click', () => { this._click(); finish(); });
     window.addEventListener('keydown', onKey, true);
 
-    // Drive the crawl from JS at a constant pixel speed, measured against the
-    // actual content + viewport height. This keeps the pace identical on any
-    // screen, trims the dead tail to a beat, and uses the animation's finish
-    // callback (reliable, unlike CSS animationend here) to start the mission.
+    // Scatter a sparse starfield behind the crawl — the text floats over space.
+    // One 1px dot replicated across the viewport via box-shadow (cheap, no nodes).
+    const starDot = this.el.querySelector('.crawl-star');
+    if (starDot) {
+      const dots = [];
+      for (let i = 0; i < 150; i++) {
+        const x = (Math.random() * 100).toFixed(2);
+        const y = (Math.random() * 100).toFixed(2);
+        const a = (0.18 + Math.random() * 0.6).toFixed(2);
+        dots.push(`${x}vw ${y}vh rgba(255,255,255,${a})`);
+      }
+      starDot.style.boxShadow = dots.join(', ');
+    }
+
+    // Drive the crawl from JS over a FIXED duration (not a fixed px/sec speed):
+    // travel distance scales with screen height, so constant-speed made the crawl
+    // drag on tall monitors. A fixed ~14s keeps it snappy on every screen, and the
+    // animation's finish callback (reliable, unlike CSS animationend) starts the
+    // mission. Geometry below is tuned so the last line rolls off the top exactly
+    // as the clock runs out — no empty lead-in, no dead tail.
     const text = this.el.querySelector('.crawl-text');
     const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (reduce || !text.animate) {
       // static layout (CSS handles it): auto-advance after a reading beat
-      timer = setTimeout(finish, 18000);
+      text.style.opacity = '1';
+      timer = setTimeout(finish, 12000);
       return;
     }
+    // Keep the crawl ("the script") fully hidden until the prelude line has had
+    // its moment and faded out — they shouldn't share the screen. The prelude CSS
+    // animation runs 4s; we reveal + launch the crawl as it clears (~3.5s).
+    const PRELUDE_MS = 3500;
+    text.style.opacity = '0';
     const vh = window.innerHeight || 800;
     const contentH = text.scrollHeight;
-    const startTop = Math.round(vh * 0.9);             // first line rises in from the lower screen
-    const endTop = -(contentH + Math.round(vh * 0.2)); // last line clears the top
-    const speed = 40;                                   // px/sec of vertical travel (a tad slower)
-    const durMs = ((startTop - endTop) / speed) * 1000;
-    // Canonical crawl: scroll vertically via `top` while the plane tilts back
-    // and recedes into the distance via translateZ (pivoting at its own bottom).
-    // The recede is what makes it pan AWAY instead of leaning toward the camera.
-    const anim = text.animate(
-      [
-        { top: `${startTop}px`, transform: 'rotateX(19deg) translateZ(0px)' },
-        { top: `${endTop}px`, transform: 'rotateX(23deg) translateZ(-700px)' },
-      ],
-      // fill:both holds the start frame through the delay (no top:0 flash) and
-      // the end frame after finishing
-      { duration: durMs, delay: 2200, easing: 'linear', fill: 'both' },
-    );
-    anim.onfinish = finish;
-    timer = setTimeout(finish, durMs + 3000); // safety net if onfinish doesn't fire
+    const startTop = Math.round(vh * 1.7);             // first lines sit low on screen, then climb
+    const endTop = -(contentH + Math.round(vh * 0.4)); // last line climbs to the top edge and rolls off
+    const durMs = 12000;                                // fixed run time, independent of screen height
+    // Canonical crawl: scroll vertically via `top` while the plane lies back at a
+    // steep "floor" angle (rotateX) and recedes into the distance via translateZ
+    // (pivoting at its own bottom). The steep tilt gives the static convergence
+    // (small at top, large at bottom); the translateZ ramp makes each line shrink
+    // as it climbs, so the text genuinely flies away toward a vanishing point.
+    const startCrawl = () => {
+      if (done) return;
+      text.style.opacity = '1';
+      const anim = text.animate(
+        [
+          { top: `${startTop}px`, transform: 'rotateX(44deg) translateZ(0px)' },
+          { top: `${endTop}px`, transform: 'rotateX(48deg) translateZ(-500px)' },
+        ],
+        // fill:both holds the start frame (no top:0 flash on the first paint) and
+        // the end frame after finishing
+        { duration: durMs, easing: 'linear', fill: 'both' },
+      );
+      anim.onfinish = finish;
+      timer = setTimeout(finish, durMs + 3000); // safety net if onfinish doesn't fire
+    };
+    timer = setTimeout(startCrawl, PRELUDE_MS);
   }
 
   showCredits() {

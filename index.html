@@ -2,7 +2,11 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="theme-color" content="#05080b" />
   <title>Webalo: Evolved Combat</title>
   <meta name="description" content="An original open-source browser FPS inspired by the early-2000s sci-fi shooter genre." />
   <link rel="stylesheet" href="./src/styles.css" />
@@ -16,6 +20,9 @@
 
   <!-- Click-to-focus prompt shown when pointer lock is lost mid-game -->
   <div id="focus-prompt" class="hidden">Click to resume — mouse look engaged</div>
+
+  <!-- Advisory shown only on touch devices held in portrait (non-blocking) -->
+  <div id="rotate-hint">↻ Rotate to landscape for the best experience</div>
 
   <script type="module" src="./src/main.js"></script>
 </body>

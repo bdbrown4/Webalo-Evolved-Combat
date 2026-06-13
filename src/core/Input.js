@@ -8,6 +8,7 @@ export class Input {
     this.settings = settings;
 
     this._codeDown = new Set();      // physical codes currently held
+    this._virtualDown = new Set();   // actions held via on-screen touch controls
     this._actionEdge = new Set();    // actions that went down THIS frame
     this._prevActionDown = new Set();
 
@@ -25,9 +26,21 @@ export class Input {
 
   setEnabled(v) {
     this.enabled = v;
-    if (!v) { this._codeDown.clear(); this._actionEdge.clear(); }
+    if (!v) { this._codeDown.clear(); this._actionEdge.clear(); this._virtualDown.clear(); }
   }
   onLockChange(fn) { this._onLockChange = fn; }
+
+  // ---- Touch / virtual input ----------------------------------------------
+  // On-screen touch controls drive ACTIONS through these. Folding them into the
+  // same down-state means Player/Game keep reading isDown()/pressed() and never
+  // need to know whether the input came from a key, a mouse, or a thumb.
+  setVirtual(action, down) {
+    if (down) this._virtualDown.add(action);
+    else this._virtualDown.delete(action);
+  }
+  // Touch look: feed deltas straight into the accumulator the mouse uses. Pointer
+  // lock never engages on touch, so this is gated on `enabled` only (not `locked`).
+  addLook(dx, dy) { if (this.enabled) { this.mouseDX += dx; this.mouseDY += dy; } }
 
   requestLock() { if (this.canvas.requestPointerLock) this.canvas.requestPointerLock(); }
   exitLock() { if (document.exitPointerLock) document.exitPointerLock(); }
@@ -96,10 +109,11 @@ export class Input {
     });
 
     // Drop all held inputs if the tab loses focus (prevents "stuck keys").
-    window.addEventListener('blur', () => { this._codeDown.clear(); });
+    window.addEventListener('blur', () => { this._codeDown.clear(); this._virtualDown.clear(); });
   }
 
   _isCodeDown(action) {
+    if (this._virtualDown.has(action)) return true;
     const code = this.settings.bindings[action];
     return code ? this._codeDown.has(code) : false;
   }

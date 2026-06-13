@@ -100,30 +100,44 @@ html, body {
 /* ---------- Opening crawl ---------- */
 .crawl-scene {
   position: fixed; inset: 0; z-index: 30;
-  background: #02040a; overflow: hidden;
+  /* Deep-space backdrop: near-black with a faint warm glow toward the horizon
+     (the vanishing point) so the crawl recedes into light, not a flat void. */
+  background: radial-gradient(120% 80% at 50% 30%, #0a1022 0%, #04060e 45%, #010206 100%);
+  overflow: hidden;
   display: flex; align-items: center; justify-content: center;
   pointer-events: auto;
+}
+/* Sparse starfield behind the crawl. The single .crawl-star dot is replicated
+   across the viewport by a box-shadow list generated in Menus.showIntro. */
+.crawl-stars { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.crawl-star {
+  position: absolute; top: 0; left: 0; width: 2px; height: 2px;
+  border-radius: 50%; background: #fff;
 }
 .crawl-prelude {
   position: absolute; top: 32%; left: 50%; transform: translate(-50%, -50%);
   width: min(680px, 82vw); text-align: center;
   color: var(--hud-cyan); font-size: clamp(16px, 2.4vw, 24px); line-height: 1.6;
   letter-spacing: 1px; z-index: 4; opacity: 0;
-  animation: crawl-prelude 6s ease-in-out forwards;
+  animation: crawl-prelude 4s ease-in-out forwards;
 }
 @keyframes crawl-prelude { 0%,8% { opacity: 0; } 22%,60% { opacity: 1; } 88%,100% { opacity: 0; } }
 
 .crawl-viewport {
   position: absolute; inset: 0; overflow: hidden;
-  perspective: 480px; perspective-origin: 50% 45%;
-  /* Alpha-fade the top: the text DISSOLVES as it recedes (a true fade to the
-     scene behind, not a darkening overlay). Larger band = fades sooner. */
-  -webkit-mask-image: linear-gradient(to bottom, transparent 2%, #000 38%, #000 100%);
-  mask-image: linear-gradient(to bottom, transparent 2%, #000 38%, #000 100%);
+  /* Stronger perspective (smaller value) + a vanishing point near the TOP of the
+     screen is what makes the text lie back like a floor receding to the horizon,
+     and lets the text climb all the way up and roll off the top edge instead of
+     dissolving in the middle and leaving a dead band of empty sky above it. */
+  perspective: 380px; perspective-origin: 50% 10%;
+  /* Alpha-fade only the very top: the text stays crisp until it reaches the top
+     edge, then DISSOLVES as it rolls off (a true fade to the sky behind it). */
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 13%, #000 100%);
+  mask-image: linear-gradient(to bottom, transparent 0%, #000 13%, #000 100%);
 }
 .crawl-text {
   position: absolute; left: 0; right: 0; margin: 0 auto; top: 0;
-  width: min(680px, 84vw);
+  width: min(760px, 86vw);
   transform-origin: 50% 100%; /* pivot at the block's bottom (canonical crawl) */
   color: var(--hud-amber); font-weight: 650; font-size: clamp(18px, 2.4vw, 28px);
   line-height: 1.7; text-align: center;
@@ -137,7 +151,8 @@ html, body {
   display: inline-block; padding: 0 0.16em; margin-bottom: 10px;
   font-size: clamp(54px, 12vw, 124px); font-weight: 900;
   letter-spacing: 6px; line-height: 1.05;
-  background: linear-gradient(180deg, #d9f6ff, #5fd0e6 55%, #2c8aa6);
+  /* Gold, to match the crawl — a cyan title broke the single-colour SW look. */
+  background: linear-gradient(180deg, #fff4c8, #ffd257 55%, #e8a020);
   -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
 }
 .crawl-ep {
@@ -357,3 +372,139 @@ select, .toggle {
 #boss-bar .bb-track { height: 14px; border-radius: 7px; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,90,140,0.5); overflow: hidden; }
 #boss-bar .bb-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #ff2a6a, #ff8ab0); transition: width .15s linear; }
 #boss-bar .bb-phase { font-size: 11px; color: var(--ink-dim); letter-spacing: 2px; margin-top: 3px; }
+
+/* ---------- Touch controls (mobile) ---------- */
+/* The overlay only renders on touch devices (Menus/main toggle `html.touch`).
+   Surfaces and buttons opt back into pointer events; touch-action:none stops the
+   browser from hijacking drags as scroll/zoom. Paints above the HUD (z 10/11). */
+.touch-controls {
+  position: fixed; inset: 0; z-index: 12; pointer-events: none;
+  touch-action: none; user-select: none; -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.touch-controls.hidden { display: none; }
+.touch-controls [data-tc], .touch-controls .tc-btn { pointer-events: auto; touch-action: none; }
+
+/* drag-to-look surface (right) and movement zone (lower-left) */
+.tc-look { position: absolute; right: 0; top: 0; width: 56%; height: 100%; }
+.tc-move { position: absolute; left: 0; bottom: 0; width: 44%; height: 62%; }
+
+/* floating joystick: base ring positioned at the touch point, knob tracks drag */
+.tc-stick {
+  position: absolute; width: 112px; height: 112px; margin: -56px 0 0 -56px;
+  border-radius: 50%; border: 2px solid rgba(95,208,230,0.45);
+  background: radial-gradient(circle, rgba(95,208,230,0.10), rgba(8,18,28,0.18));
+  opacity: 0; transition: opacity .12s; pointer-events: none;
+}
+.tc-stick.active { opacity: 1; }
+.tc-knob {
+  position: absolute; left: 50%; top: 50%; width: 50px; height: 50px;
+  margin: -25px 0 0 -25px; border-radius: 50%;
+  background: rgba(95,208,230,0.4); border: 2px solid rgba(213,246,255,0.7);
+  box-shadow: 0 0 14px rgba(95,208,230,0.5);
+}
+
+/* buttons */
+.tc-btn {
+  position: relative; display: flex; align-items: center; justify-content: center;
+  border-radius: 50%; border: 2px solid rgba(95,208,230,0.5);
+  background: rgba(8,20,30,0.46); color: var(--hud-cyan);
+  font: 700 13px/1 system-ui, sans-serif; letter-spacing: 0.5px;
+  text-transform: uppercase; backdrop-filter: blur(2px);
+}
+.tc-btn.active, .tc-btn:active {
+  background: rgba(95,208,230,0.34); color: #eafcff;
+  border-color: rgba(213,246,255,0.9); box-shadow: 0 0 16px rgba(95,208,230,0.5);
+}
+.tc-fire {
+  width: 96px; height: 96px; font-size: 16px;
+  border-color: rgba(255,120,120,0.7); color: #ffd2d2; background: rgba(40,10,12,0.5);
+}
+.tc-fire.active, .tc-fire:active { background: rgba(255,80,80,0.4); border-color: #ffd2d2; box-shadow: 0 0 22px rgba(255,90,90,0.6); }
+.tc-md { width: 64px; height: 64px; }
+.tc-sm { width: 58px; height: 58px; font-size: 12px; }
+.tc-mini { width: 46px; height: 46px; font-size: 12px; border-radius: 12px; }
+
+/* FIRE: big, fixed in the bottom-right corner (thumb rest). */
+.tc-fire {
+  position: absolute;
+  right: calc(16px + env(safe-area-inset-right)); bottom: calc(16px + env(safe-area-inset-bottom));
+}
+/* secondary action grid, sitting just left of FIRE; wraps upward as needed */
+.tc-actions {
+  position: absolute;
+  right: calc(122px + env(safe-area-inset-right)); bottom: calc(16px + env(safe-area-inset-bottom));
+  display: flex; flex-direction: row; flex-wrap: wrap-reverse;
+  justify-content: flex-end; align-items: flex-end; gap: 10px; width: 224px;
+}
+/* top-left utility row: pause, weapon select, grenade cycle, flashlight */
+.tc-util {
+  position: absolute; top: calc(8px + env(safe-area-inset-top)); left: calc(12px + env(safe-area-inset-left));
+  display: flex; flex-direction: row; flex-wrap: wrap; gap: 8px; max-width: 60vw;
+}
+.tc-pause { border-color: rgba(255,210,120,0.6); color: var(--hud-amber); }
+
+/* Reposition the HUD readouts off the bottom corners (thumbs live there) up to
+   the top on touch layouts, and lift subtitles clear of the button cluster. */
+html.touch .vitals { top: 56px; bottom: auto; left: 12px; width: 190px; }
+html.touch .ammo { top: 8px; bottom: auto; right: 14px; }
+html.touch #tracker { width: 104px; height: 104px; bottom: 14px; }
+html.touch .objective { max-width: 50vw; top: 52px; }
+html.touch #subtitle { bottom: 30%; max-width: 78vw; }
+html.touch #prompt { top: 60%; }
+
+/* Short landscape phones: shrink the touch widgets so the cluster stays compact. */
+@media (max-height: 440px) {
+  .tc-fire { width: 80px; height: 80px; font-size: 15px; }
+  .tc-md { width: 58px; height: 58px; }
+  .tc-mini { width: 42px; height: 42px; font-size: 11px; }
+  .tc-actions { right: calc(106px + env(safe-area-inset-right)); width: 204px; gap: 9px; }
+  html.touch .objective { top: 46px; font-size: 14px; }
+  html.touch .vitals { top: 48px; width: 168px; }
+  html.touch .ammo .count { font-size: 34px; }
+}
+
+/* ---------- Responsive / small screens ---------- */
+/* Tall menus (settings, mission select) scroll instead of clipping on short
+   landscape phones; centered content falls back to top-aligned + scrollable. */
+@media (max-height: 600px) {
+  .screen { justify-content: flex-start; overflow-y: auto; padding: 16px 0; }
+  .title-block { margin-bottom: 16px; }
+  .game-title { font-size: clamp(38px, 8vw, 72px); }
+  .game-sub { font-size: 16px; }
+}
+/* Coarse pointers get bigger tap targets and roomier hit areas. */
+html.touch .btn { padding: 14px 20px; font-size: 16px; }
+html.touch .tab { padding: 10px 14px; }
+html.touch .crawl-skip { padding: 12px 22px; font-size: 15px; }
+/* Stack each setting row's control under its label when the screen is narrow,
+   so the 220px control can't shove the label off-screen. */
+@media (max-width: 560px) {
+  .setting-row { flex-direction: column; align-items: stretch; gap: 8px; }
+  .setting-control { min-width: 0; justify-content: flex-start; }
+  input[type="range"] { width: 100%; max-width: 240px; }
+  .panel { width: 94vw; }
+  .mission-grid { grid-template-columns: 1fr; }
+}
+
+/* Portrait rotate hint — advisory only (non-blocking), touch devices only. */
+#rotate-hint { display: none; }
+@media (orientation: portrait) {
+  html.touch #rotate-hint {
+    display: block; position: fixed; top: 0; left: 0; right: 0; z-index: 40;
+    padding: 8px 12px; text-align: center; pointer-events: none;
+    background: rgba(8,16,22,0.92); color: var(--hud-amber);
+    font-size: 13px; letter-spacing: 0.4px; border-bottom: 1px solid var(--panel-edge);
+  }
+  /* Compact the action cluster onto the right half so it clears the (left-side)
+     joystick zone on a narrow portrait screen. */
+  html.touch .tc-move { width: 38%; }
+  html.touch .tc-fire { width: 76px; height: 76px; }
+  html.touch .tc-md { width: 56px; height: 56px; }
+  html.touch .tc-actions { width: 132px; right: calc(96px + env(safe-area-inset-right)); gap: 8px; }
+  /* clear the rotate-hint banner (top:0) so the top row + HUD aren't obscured */
+  html.touch .tc-util { max-width: 92vw; top: calc(40px + env(safe-area-inset-top)); }
+  html.touch .ammo { top: calc(40px + env(safe-area-inset-top)); }
+  html.touch .vitals { top: calc(92px + env(safe-area-inset-top)); }
+  html.touch .objective { top: calc(92px + env(safe-area-inset-top)); }
+}

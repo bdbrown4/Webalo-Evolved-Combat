@@ -19,7 +19,26 @@ import { AssetFactory } from './AssetFactory.js';
 import { getDifficulty, DIFFICULTY_ORDER } from './Difficulty.js';
 import { codeLabel } from './Settings.js';
 import { HUD } from '../ui/HUD.js';
+import { TouchControls } from '../ui/TouchControls.js';
 import { CAMPAIGN, markCompleted, loadCheckpoint, saveCheckpoint, clearCheckpoint } from '../missions/campaign.js';
+
+// Touch-device detection. `?touch=1`/`?touch=0` force it on/off (handy for hybrid
+// laptops and for testing the touch UI in a desktop browser).
+function detectTouch() {
+  try {
+    const q = new URLSearchParams(location.search).get('touch');
+    if (q === '1' || q === 'true') return true;
+    if (q === '0' || q === 'false') return false;
+  } catch (e) { /* no location */ }
+  const mm = window.matchMedia;
+  const coarse = !!(mm && mm('(pointer: coarse)').matches);   // primary pointer is touch
+  const noHover = !!(mm && mm('(hover: none)').matches);
+  const hasTouch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+  // Touch-primary devices (phones/tablets) report a coarse primary pointer; a
+  // touchscreen laptop keeps a fine primary pointer + hover, so it stays on
+  // mouse/keyboard. Override either way with ?touch=1 / ?touch=0.
+  return coarse || (noHover && hasTouch);
+}
 
 export class Game {
   constructor(canvas, root, settings, input, audio) {
@@ -75,6 +94,15 @@ export class Game {
 
     this.focusPrompt = document.getElementById('focus-prompt');
     this._reducedMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+
+    // Touch: build the on-screen controls and flag the document so the HUD/menus
+    // adopt their touch layout. Shown only while actually playing (_setPlayInput).
+    this.isTouch = detectTouch();
+    if (this.isTouch) document.documentElement.classList.add('touch');
+    this.touch = this.isTouch
+      ? new TouchControls(root, this.input, { onPause: () => { if (this.state === 'playing') this.togglePause(); } })
+      : null;
+
     this._bindResize();
     this._bindLock();
     this._applyQuality();
@@ -94,7 +122,8 @@ export class Game {
 
   _bindLock() {
     this.input.onLockChange((locked) => {
-      if (this.state === 'playing' && !locked) {
+      // Touch has no pointer lock, so the "click to resume" prompt never applies.
+      if (!this.isTouch && this.state === 'playing' && !locked) {
         // lock loss wipes held keys — refund a primed grenade so the stale
         // "released" read can't auto-throw it while the player has no control
         if (this.player) this.player.cancelCook();
@@ -104,7 +133,7 @@ export class Game {
       }
     });
     this.canvas.addEventListener('click', () => {
-      if (this.state === 'playing' && !this.input.locked) this.input.requestLock();
+      if (!this.isTouch && this.state === 'playing' && !this.input.locked) this.input.requestLock();
     });
   }
 
@@ -214,8 +243,8 @@ export class Game {
     this.camera.updateProjectionMatrix();
     this.hud.clearTransients();
     this.state = 'playing';
-    this.input.setEnabled(true);
-    this.input.requestLock();
+    this._setPlayInput(true);
+    if (!this.isTouch) this.input.requestLock();
   }
 
   _teardownWorld() {
@@ -268,12 +297,19 @@ export class Game {
     return this._ctxObj;
   }
 
+  // Enable/disable play input and mirror the on-screen touch controls' visibility
+  // to it — they should be live (and visible) only while the player has control.
+  _setPlayInput(on) {
+    this.input.setEnabled(on);
+    if (this.touch) { if (on) this.touch.show(); else this.touch.hide(); }
+  }
+
   // ---------- pause / resume ----------
   togglePause() {
     if (this.state === 'playing') {
       this.state = 'paused';
       if (this.player) this.player.cancelCook();
-      this.input.setEnabled(false);
+      this._setPlayInput(false);
       this.input.exitLock();
       this.focusPrompt.classList.add('hidden');
       this.hud.show(false);
@@ -286,8 +322,8 @@ export class Game {
     if (this.state !== 'paused') return;
     this.state = 'playing';
     this.hud.show(true);
-    this.input.setEnabled(true);
-    this.input.requestLock();
+    this._setPlayInput(true);
+    if (!this.isTouch) this.input.requestLock();
     this.onResume && this.onResume();
   }
   quitToMenu() {
@@ -295,7 +331,7 @@ export class Game {
     this.audio.stopAll();
     this.hud.show(false);
     this.state = 'menu';
-    this.input.setEnabled(false);
+    this._setPlayInput(false);
     this.input.exitLock();
     this.onQuit && this.onQuit();
   }
@@ -328,7 +364,7 @@ export class Game {
   _missionComplete() {
     if (this.state === 'result') return;
     this.state = 'result';
-    this.input.setEnabled(false); this.input.exitLock();
+    this._setPlayInput(false); this.input.exitLock();
     this.hud.clearTransients();
     // drop a held grenade hand / mid-jab fist and restore the weapon so none
     // freeze on screen under the result banner (death/win can land mid-action)
@@ -346,7 +382,7 @@ export class Game {
   _missionFailed(reason) {
     if (this.state === 'result') return;
     this.state = 'result';
-    this.input.setEnabled(false); this.input.exitLock();
+    this._setPlayInput(false); this.input.exitLock();
     this.hud.clearTransients();
     this._clearNadeModel();
     this._clearMeleeModel();

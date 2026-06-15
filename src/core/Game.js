@@ -20,6 +20,7 @@ import { getDifficulty, DIFFICULTY_ORDER } from './Difficulty.js';
 import { codeLabel } from './Settings.js';
 import { HUD } from '../ui/HUD.js';
 import { TouchControls } from '../ui/TouchControls.js';
+import { Tutorial, TUTORIAL_MISSION } from '../ui/Tutorial.js';
 import { CAMPAIGN, markCompleted, loadCheckpoint, saveCheckpoint, clearCheckpoint } from '../missions/campaign.js';
 
 // Touch-device detection. `?touch=1`/`?touch=0` force it on/off (handy for hybrid
@@ -156,6 +157,20 @@ export class Game {
     this._showMissionCard(CAMPAIGN[this.missionIndex]);
   }
 
+  // Guided training, entered from the main menu. Builds a damage-free arena through
+  // the normal mission pipeline, then overlays the step-by-step Tutorial. The level's
+  // win/advance is suppressed (level.tutorial) so it never "completes" out from under
+  // the script; the player leaves any time via Pause, which routes back to the menu.
+  startTutorial() {
+    this.missionIndex = 0;
+    this._resume = false;
+    this._beginMission(TUTORIAL_MISSION);
+    this.level.tutorial = true;
+    this.player.dmgTakenMult = 0;            // safe sandbox — no damage during training
+    this.tutorial = new Tutorial(this.root, this, () => this.quitToMenu());
+    this.tutorial.start();
+  }
+
   _showMissionCard(mission) {
     this._clearResult();
     this.card = document.createElement('div');
@@ -248,6 +263,7 @@ export class Game {
   }
 
   _teardownWorld() {
+    if (this.tutorial) { this.tutorial.destroy(); this.tutorial = null; }
     if (this.vehicle) { this.scene.remove(this.vehicle.mesh); this.vehicle = null; }
     if (this.player) this.player.driving = false;
     this._clearNadeModel();
@@ -555,49 +571,52 @@ export class Game {
     else this.renderer.render(this.scene, this.camera);
   }
 
-  // Touch on-foot auto-aim. Tapping an enemy LOCKS it and swings the gun onto it
-  // (and keeps tracking it as it moves — we follow the locked enemy, not whatever
-  // is under the finger, which slides away as the view centres). Drag the finger
-  // to a new spot to re-target; with nothing there, the finger steers a free look.
-  _touchAimFoot(dt) {
-    const pt = this.touch.aimPt, p = this.player;
-    if (!p || p.dead) return;
+  // Soft aim-assist for touch on foot. The reticle stays centred and the player
+  // drags to look; here we find the nearest enemy inside a screen-centre cone and
+  // pull the view GENTLY toward it — stronger while firing, fading to nothing at
+  // the cone's edge — so shots land without pixel-perfect thumbs. It's a nudge,
+  // never a lock: the player's own drag always overrides it. Works in world
+  // angles (not mouseDX) so its feel is independent of the sensitivity slider.
+  _touchAssist(dt) {
+    const p = this.player;
+    if (!p || p.dead || !p.weapon) return;
     this.camera.updateMatrixWorld();
-    const moved = !this._touchAcqPt || Math.hypot(pt.x - this._touchAcqPt.x, pt.y - this._touchAcqPt.y) > 0.16;
-    if (!this._touchTarget || this._touchTarget.dead || moved) {
-      let best = null, bestD = 0.26;
-      const v = new THREE.Vector3();
-      for (const e of this.enemies) {
-        if (e.dead) continue;
-        v.copy(e.aimPoint()).project(this.camera);
-        if (v.z > 1) continue;
-        const d = Math.hypot(v.x - pt.x, v.y - pt.y);
-        if (d < bestD) { bestD = d; best = e; }
-      }
-      if (best) { this._touchTarget = best; this._touchAcqPt = { x: pt.x, y: pt.y }; }
-      else if (moved) this._touchTarget = null; // finger over empty space
+    const v = new THREE.Vector3();
+    const CONE = 0.34;                 // NDC radius around the centred reticle
+    let best = null, bestD = CONE;
+    for (const e of this.enemies) {
+      if (e.dead) continue;
+      v.copy(e.aimPoint()).project(this.camera);
+      if (v.z > 1) continue;           // behind the camera
+      const d = Math.hypot(v.x, v.y);  // distance from screen centre
+      if (d < bestD) { bestD = d; best = e; }
     }
-    const tgt = (this._touchTarget && !this._touchTarget.dead) ? this._touchTarget : null;
-    if (tgt) {
-      const dir = new THREE.Vector3().subVectors(tgt.aimPoint(), p.headPoint());
-      const dist = dir.length(); if (dist < 0.001) return;
-      const desiredYaw = Math.atan2(dir.x, dir.z);
-      const desiredPitch = Math.asin(Math.max(-1, Math.min(1, dir.y / dist)));
-      let dyaw = desiredYaw - p.yaw;
-      while (dyaw > Math.PI) dyaw -= Math.PI * 2; while (dyaw < -Math.PI) dyaw += Math.PI * 2;
-      const k = Math.min(1, dt * 14);
-      p.yaw += dyaw * k;
-      p.pitch += (desiredPitch - p.pitch) * k;
-    } else {
-      const turn = dt * 1.9;
-      p.yaw += pt.x * turn;
-      p.pitch += pt.y * turn;
-      const lim = Math.PI / 2 - 0.02;
-      p.pitch = Math.max(-lim, Math.min(lim, p.pitch));
-    }
+    if (!best) return;
+    const dir = new THREE.Vector3().subVectors(best.aimPoint(), p.headPoint());
+    const dist = dir.length(); if (dist < 0.001) return;
+    const desiredYaw = Math.atan2(dir.x, dir.z);
+    const desiredPitch = Math.asin(Math.max(-1, Math.min(1, dir.y / dist)));
+    let dyaw = desiredYaw - p.yaw;
+    while (dyaw > Math.PI) dyaw -= Math.PI * 2; while (dyaw < -Math.PI) dyaw += Math.PI * 2;
+    const firing = this.input.isDown('fire');
+    const fade = 1 - bestD / CONE;     // full strength near centre, zero at the edge
+    const k = Math.min(0.5, dt * (firing ? 8 : 3) * fade);
+    p.yaw += dyaw * k;
+    p.pitch += (desiredPitch - p.pitch) * k;
+    const lim = Math.PI / 2 - 0.02;
+    p.pitch = Math.max(-lim, Math.min(lim, p.pitch));
+    this.player._syncCamera(this.settings, 0); // re-aim same-frame (FOV untouched at dt 0)
   }
 
   _updatePlay(dt) {
+    // Touch owns the 'fire' virtual (single writer): the held FIRE button or a
+    // one-shot tap on the look pad. Set it BEFORE beginFrame so a tap registers
+    // as a pressed-edge this frame for semi-auto weapons (and for the turret).
+    if (this.isTouch && this.touch) {
+      const fire = this.touch.fireHeld || this.touch.tapFire;
+      this.touch.tapFire = false;
+      this.input.setVirtual('fire', fire);
+    }
     this.input.beginFrame();
     const ctx = this._ctx();
 
@@ -608,15 +627,11 @@ export class Game {
     if (scoped !== this._scoped) { this._scoped = scoped; this.audio.sfx(scoped ? 'scopein' : 'scopeout'); }
 
     this.player.update(dt, this.input, this.settings, ctx);
-    const touchAim = this.isTouch && this.touch && this.touch.aimActive;
     if (this.vehicle) {
-      if (touchAim) { this.vehicle.aim.x = this.touch.aimPt.x; this.vehicle.aim.y = this.touch.aimPt.y; } // reticle follows finger
-      this.vehicle.update(dt, this.input, ctx);
+      this.vehicle.update(dt, this.input, ctx);   // drag-look moves the turret reticle (mouseDX)
       this.player.pos.copy(this.vehicle.pos);
-    } else if (touchAim) {
-      this._touchAimFoot(dt);            // turn the view toward the locked enemy
-    } else {
-      this._touchTarget = null; this._touchAcqPt = null; // finger up: drop the lock
+    } else if (this.isTouch) {
+      this._touchAssist(dt);                       // soft aim magnetism off the centred reticle
     }
     // touch QoL: auto-reload a dry magazine
     if (this.isTouch && this.player.weapon && this.player.weapon.needsReload() && this.player.weapon.reloading <= 0) {
@@ -675,6 +690,7 @@ export class Game {
 
     // level flow
     this.level.update(dt, this.player, ctx);
+    if (this.tutorial) this.tutorial.update(dt);
 
     // signature ring drift
     if (this.aureole) this.aureole.rotation.z += dt * 0.01;

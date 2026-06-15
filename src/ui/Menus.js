@@ -40,6 +40,7 @@ export class Menus {
         <div class="menu-list">
           <button class="btn primary" data-act="new">▶ New Campaign</button>
           <button class="btn" data-act="continue" ${hasProgress ? '' : 'disabled'}>↻ Continue${hasProgress ? ' — Mission ' + (p.unlocked + 1) : ''}</button>
+          <button class="btn" data-act="tutorial">🎓 Tutorial</button>
           <button class="btn" data-act="select">☰ Mission Select</button>
           <button class="btn" data-act="settings">⚙ Settings</button>
           <button class="btn ghost" data-act="credits">ℹ Credits</button>
@@ -54,6 +55,7 @@ export class Menus {
       const a = b.dataset.act;
       if (a === 'new') this.showIntro(() => this.h.onStart(0));
       else if (a === 'continue') this.h.onStart(loadProgress().unlocked);
+      else if (a === 'tutorial') this.h.onTutorial && this.h.onTutorial();
       else if (a === 'select') this.showMissionSelect();
       else if (a === 'settings') this.showSettings('controls', () => this.showMain());
       else if (a === 'credits') this.showCredits();

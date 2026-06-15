@@ -390,9 +390,9 @@ select, .toggle {
 .touch-controls.hidden { display: none; }
 .touch-controls [data-tc], .touch-controls .tc-btn { pointer-events: auto; touch-action: none; }
 
-/* aim+FIRE pad (right) and movement zone (lower-left) */
-.tc-aim { position: absolute; right: 0; top: 0; width: 62%; height: 100%; }
-.tc-move { position: absolute; left: 0; bottom: 0; width: 40%; height: 64%; }
+/* LOOK area (right — drag to aim) and movement zone (lower-left) */
+.tc-look { position: absolute; right: 0; top: 0; width: 60%; height: 100%; }
+.tc-move { position: absolute; left: 0; bottom: 0; width: 42%; height: 70%; }
 
 /* floating joystick: base ring positioned at the touch point, knob tracks drag */
 .tc-stick {
@@ -424,12 +424,39 @@ select, .toggle {
 .tc-md { width: 62px; height: 62px; }
 .tc-mini { width: 46px; height: 46px; font-size: 12px; border-radius: 12px; }
 
-/* essential action cluster: a small column in the bottom-right corner */
+/* FIRE — the primary thumb button, bottom-right corner */
+.tc-fire {
+  position: absolute;
+  right: calc(18px + env(safe-area-inset-right)); bottom: calc(20px + env(safe-area-inset-bottom));
+  width: 92px; height: 92px; font-size: 15px;
+  border-color: rgba(255,120,120,0.7); color: #ffd0d0;
+}
+.tc-fire.active, .tc-fire:active {
+  background: rgba(255,90,90,0.34); border-color: rgba(255,200,200,0.95);
+  box-shadow: 0 0 20px rgba(255,90,90,0.6); color: #fff;
+}
+/* reload / nade / jump — a column tucked just left of FIRE */
+.tc-right2 {
+  position: absolute;
+  right: calc(124px + env(safe-area-inset-right)); bottom: calc(20px + env(safe-area-inset-bottom));
+  display: flex; flex-direction: column-reverse; align-items: center; gap: 12px;
+}
+/* ads / swap — a shorter column further inboard */
 .tc-actions {
   position: absolute;
-  right: calc(16px + env(safe-area-inset-right)); bottom: calc(16px + env(safe-area-inset-bottom));
-  display: flex; flex-direction: column; align-items: flex-end; gap: 12px;
+  right: calc(200px + env(safe-area-inset-right)); bottom: calc(20px + env(safe-area-inset-bottom));
+  display: flex; flex-direction: column-reverse; align-items: center; gap: 12px;
 }
+/* first-play hint — one line, fades out after a few seconds */
+.tc-hint {
+  position: absolute; left: 50%; bottom: 16%; transform: translateX(-50%);
+  padding: 8px 16px; border-radius: 20px; white-space: nowrap; max-width: 92vw;
+  background: rgba(8,16,22,0.85); border: 1px solid rgba(95,208,230,0.4);
+  color: var(--ink); font-size: 13px; letter-spacing: 0.3px;
+  opacity: 0; transition: opacity .4s; pointer-events: none;
+}
+.tc-hint.show { opacity: 1; }
+.tc-hint b { color: #ffd0d0; }
 /* contextual Use button, bottom-centre (shown only when a prompt is up) */
 .tc-use {
   position: absolute; left: 50%; transform: translateX(-50%);
@@ -456,7 +483,9 @@ html.touch #prompt { top: 60%; }
 @media (max-height: 440px) {
   .tc-md { width: 54px; height: 54px; }
   .tc-mini { width: 42px; height: 42px; font-size: 11px; }
-  .tc-actions { gap: 9px; }
+  .tc-fire { width: 78px; height: 78px; }
+  .tc-right2 { right: calc(104px + env(safe-area-inset-right)); gap: 9px; }
+  .tc-actions { right: calc(172px + env(safe-area-inset-right)); gap: 9px; }
   .tc-use { width: 60px; height: 60px; }
   html.touch .objective { top: 46px; font-size: 14px; }
   html.touch .vitals { top: 48px; width: 168px; }
@@ -498,6 +527,9 @@ html.touch .crawl-skip { padding: 12px 22px; font-size: 15px; }
   /* Narrow portrait: keep the buttons compact and clear the rotate-hint banner. */
   html.touch .tc-move { width: 42%; }
   html.touch .tc-md { width: 56px; height: 56px; }
+  html.touch .tc-fire { width: 82px; height: 82px; right: calc(14px + env(safe-area-inset-right)); }
+  html.touch .tc-right2 { right: calc(104px + env(safe-area-inset-right)); }
+  html.touch .tc-actions { right: calc(170px + env(safe-area-inset-right)); }
   html.touch .tc-pause { top: calc(42px + env(safe-area-inset-top)); }
   html.touch .ammo { top: calc(40px + env(safe-area-inset-top)); }
   html.touch .vitals { top: calc(92px + env(safe-area-inset-top)); }
@@ -539,3 +571,34 @@ html.touch .crawl-skip { padding: 12px 22px; font-size: 15px; }
 #miniboss-bar .mb-shield-bar { border-color: rgba(95,208,230,0.5); height: 5px; }
 #miniboss-bar .mb-shield { height: 100%; width: 100%; background: linear-gradient(90deg, #3aa6d8, #9fe8ff); transition: width .12s linear; }
 #miniboss-bar .mb-hp { height: 100%; width: 100%; background: linear-gradient(90deg, #2ca06a, #7CFC9A); transition: width .12s linear; }
+
+/* ---------- Tutorial / Training overlay ---------- */
+/* A top-centre instructional card. pointer-events:none so it never blocks the
+   controls underneath (the player performs each action in-world to advance). */
+.tutorial-overlay {
+  position: fixed; top: calc(64px + env(safe-area-inset-top)); left: 50%;
+  transform: translateX(-50%); z-index: 14; pointer-events: none;
+  width: min(540px, 92vw); text-align: center;
+}
+.tutorial-overlay.hidden { display: none; }
+.tut-card {
+  background: rgba(8,16,22,0.9); border: 1px solid rgba(95,208,230,0.45);
+  border-radius: 12px; padding: 14px 18px; backdrop-filter: blur(3px);
+  box-shadow: 0 10px 34px rgba(0,0,0,0.5);
+}
+.tutorial-overlay.info .tut-card { border-color: rgba(255,210,120,0.55); }
+.tut-step { font-size: 11px; letter-spacing: 3px; text-transform: uppercase; color: var(--hud-cyan); opacity: 0.85; }
+.tutorial-overlay.info .tut-step { color: var(--hud-amber); }
+.tut-title { font-size: clamp(18px, 2.4vw, 24px); font-weight: 700; color: var(--ink); margin: 3px 0 6px; letter-spacing: 0.3px; }
+.tut-body { font-size: 14px; line-height: 1.5; color: var(--ink-dim); }
+.tut-body b { color: var(--ink); }
+.tut-cont { margin-top: 9px; font-size: 12.5px; letter-spacing: 0.4px; color: var(--hud-amber); min-height: 0; }
+.tut-cont:empty { display: none; }
+.tut-exit { margin-top: 8px; font-size: 11px; letter-spacing: 0.5px; color: var(--ink-dim); opacity: 0.7; }
+
+@media (max-height: 440px) {
+  .tutorial-overlay { top: calc(40px + env(safe-area-inset-top)); width: min(440px, 78vw); }
+  .tut-card { padding: 9px 14px; }
+  .tut-body { font-size: 12.5px; line-height: 1.4; }
+  .tut-title { margin: 2px 0 4px; }
+}

@@ -18,6 +18,20 @@ const root = document.getElementById('ui-root');
   document.addEventListener(ev, (e) => e.preventDefault(), { passive: false }));
 document.addEventListener('touchmove', (e) => { if (e.touches && e.touches.length > 1) e.preventDefault(); }, { passive: false });
 
+// iOS Safari still double-tap-zooms on some versions even with touch-action:none,
+// and a rapid fire-tap reads to the OS exactly like a double-tap. Cancel the
+// second tap of any quick pair that lands on a GAME surface (the canvas or the
+// touch overlay). Our own fire/reload run on pointer events, which this never
+// touches — and menus, which need ordinary tapping, are left completely alone.
+let _lastGameTap = 0;
+const onGameSurface = (t) => !!(t && (t.id === 'game-canvas' || (t.closest && t.closest('.touch-controls'))));
+document.addEventListener('touchend', (e) => {
+  if (!onGameSurface(e.target)) return;
+  const now = e.timeStamp || performance.now();
+  if (now - _lastGameTap < 350) e.preventDefault(); // swallow the zoom-triggering second tap
+  _lastGameTap = now;
+}, { passive: false });
+
 const settings = new Settings();
 const audio = new Audio(settings);
 const input = new Input(canvas, settings);
@@ -25,6 +39,7 @@ const game = new Game(canvas, root, settings, input, audio);
 
 const menus = new Menus(root, settings, input, audio, {
   onStart: (index) => { menus.hide(); game.startMission(index); },
+  onTutorial: () => { menus.hide(); game.startTutorial(); },
   onResume: () => { game.resume(); },
   onRestart: () => { menus.hide(); game.restartFresh(); },
   onQuit: () => { game.quitToMenu(); },

@@ -430,8 +430,9 @@ export class LevelBuilder {
       if (this.escapeTime <= 0) { this._fail(ctx, 'Too slow. The Aureole fired and took the ring — and you — with it.'); return; }
     }
 
-    // clear check
-    if (!room.cleared) {
+    // clear check (skipped in Training — the Tutorial controller owns the flow and
+    // the empty arena would otherwise "clear" and complete the mission instantly)
+    if (!room.cleared && !this.tutorial) {
       const enemiesLeft = room.enemies.filter((e) => !e.dead).length;
       const objectivesDone = room.reactorDone && room.bossDead;
       // A boss room is cleared by defeating the boss alone. The boss spawns adds
@@ -458,8 +459,10 @@ export class LevelBuilder {
     p.taken = true;
     p.mesh.visible = false;
     ctx.audio && ctx.audio.sfx('pickup');
-    if (p.type === 'health') player.addHealth(25);
-    else if (p.type === 'ammo') { player.weapons.forEach((w) => w.addReserve(w.def.magazine)); }
+    // Each pickup announces what it did, so the floating diamonds aren't a mystery:
+    // red = health, gold = ammo, cyan = a weapon.
+    if (p.type === 'health') { player.addHealth(25); ctx.onBanner && ctx.onBanner('+25 HEALTH', '', 0.9); }
+    else if (p.type === 'ammo') { player.weapons.forEach((w) => w.addReserve(w.def.magazine)); ctx.onBanner && ctx.onBanner('AMMO RESTOCKED', '', 0.9); }
     else if (p.type === 'weapon' && p.weapon) { player.giveWeapon(p.weapon); ctx.onBanner && ctx.onBanner('PICKED UP', p.weapon.toUpperCase(), 1.0); }
     ctx.onPickup && ctx.onPickup(p);
   }

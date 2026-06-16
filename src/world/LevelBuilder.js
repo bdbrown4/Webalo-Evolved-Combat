@@ -395,6 +395,7 @@ export class LevelBuilder {
 
     const room = this.segments[this.activeIndex];
     if (!room) return;
+    this._containRoom(room, dt, player, ctx); // keep enemies in-bounds & reachable (anti-soft-lock)
 
     // reactor / boss console interaction
     let promptText = null;
@@ -453,6 +454,45 @@ export class LevelBuilder {
     }
 
     // failsafe: if a non-escape active room is cleared but advance stalled
+  }
+
+  // Keep the active room's enemies reachable. Knockback, the enemy-vs-enemy
+  // separation shove, or a summon that lands in a wall can put an enemy outside
+  // the room — and since a room only clears when EVERY enemy is dead, a single
+  // unreachable straggler soft-locks progress. Each frame we pull stragglers back
+  // inside the walls; as a guaranteed last resort, if no damage has landed on any
+  // survivor for a sustained stretch (they're genuinely unreachable), we neutralise
+  // them so the door can open. The open escape track and boss rooms are exempt.
+  _containRoom(room, dt, player, ctx) {
+    if (!room || room.seg.event === 'vehicle-escape') return;
+    const hw = room.w / 2;
+    let aliveCount = 0, aliveHp = 0;
+    for (const e of room.enemies) {
+      if (e.dead) continue;
+      aliveCount++; aliveHp += (e.hp || 0) + (e.shield || 0);
+      if (e.type === 'boss') continue;                 // the boss owns its (large) arena
+      const m = (e.radius || 0.6) + 0.6;
+      const xMin = room.cx - hw + m, xMax = room.cx + hw - m;
+      const zMin = room.zFront + m, zMax = room.zBack - m;
+      let moved = false;
+      if (e.pos.x < xMin) { e.pos.x = xMin; e.vel && (e.vel.x = 0); moved = true; }
+      else if (e.pos.x > xMax) { e.pos.x = xMax; e.vel && (e.vel.x = 0); moved = true; }
+      if (e.pos.z < zMin) { e.pos.z = zMin; e.vel && (e.vel.z = 0); moved = true; }
+      else if (e.pos.z > zMax) { e.pos.z = zMax; e.vel && (e.vel.z = 0); moved = true; }
+      if (!e.hover && (e.pos.y < 0 || e.pos.y > 30)) { e.pos.y = 0.1; e.vel && e.vel.set(0, 0, 0); moved = true; }
+      if (moved && e.mesh) e.mesh.position.copy(e.pos);
+    }
+
+    // Soft-lock failsafe (boss rooms clear by defeat, so they're exempt).
+    if (room.seg.event === 'boss' || aliveCount === 0) { room._stuckT = 0; room._lastHp = aliveHp; room._lastAlive = aliveCount; return; }
+    const progressed = aliveCount < (room._lastAlive ?? Infinity) || aliveHp < (room._lastHp ?? Infinity) - 0.01;
+    room._stuckT = progressed ? 0 : (room._stuckT || 0) + dt;
+    room._lastAlive = aliveCount; room._lastHp = aliveHp;
+    if (room._stuckT > 30) {
+      room._stuckT = 0;
+      for (const e of room.enemies) { if (!e.dead && e.type !== 'boss') e.takeDamage(1e9, { source: player.pos }); }
+      ctx.onBanner && ctx.onBanner('AREA SECURED', 'IRIS purged a straggler that slipped the geometry.', 1.8);
+    }
   }
 
   _collect(p, player, ctx) {

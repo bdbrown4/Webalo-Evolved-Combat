@@ -24,6 +24,8 @@ import { TouchControls } from '../ui/TouchControls.js';
 import { Tutorial, TUTORIAL_MISSION } from '../ui/Tutorial.js';
 import { Survival, SURVIVAL_MISSION } from '../ui/Survival.js';
 import { CAMPAIGN, markCompleted, loadCheckpoint, saveCheckpoint, clearCheckpoint, loadProgress, saveProgress } from '../missions/campaign.js';
+import { serializeSnapshot, applySnapshot, serializeInput, NetInputProxy, interpolateGhosts, clearGhosts, withSeededRandom, NET_SNAP_DT, NET_INPUT_DT } from '../net/CoopSync.js';
+import { hostTrystero, joinTrystero, createManual, makeRoomCode } from '../net/Net.js';
 
 // Touch-device detection. `?touch=1`/`?touch=0` force it on/off (handy for hybrid
 // laptops and for testing the touch UI in a desktop browser).
@@ -77,6 +79,11 @@ export class Game {
     this.enemies = [];
     this.projectiles = [];
     this.players = [];          // all players in the world; [local] solo, [local, remote…] in co-op
+    this.net = null; this.coopRole = null;   // 'host' | 'guest' while a co-op session is live
+    this._ghosts = new Map();                // guest: enemy id -> { mesh, target } ghosts
+    this._projGhosts = new Map();            // guest: projectile id -> { mesh } ghosts
+    this._netEvents = [];                    // host: one-shot events queued for the next snapshot
+    this._netSnapAccum = 0; this._netInputAccum = 0; this._netSeq = 0; this._guestFireCd = 0;
     this.fx = [];
     this.state = 'menu';
     this.shakeAmt = 0;
@@ -263,7 +270,11 @@ export class Game {
     // level
     this.physics.clear();
     this.level = new LevelBuilder();
-    let spawn = this.level.build(mission, this.physics, this._ctx());
+    // Co-op: build the arena under a shared seed so host and guest get byte-identical
+    // geometry (cover, dimensions) — the only part of the world both sides generate.
+    let spawn = this._levelSeed
+      ? withSeededRandom(this._levelSeed, () => this.level.build(mission, this.physics, this._ctx()))
+      : this.level.build(mission, this.physics, this._ctx());
     this.scene.add(this.level.group);
 
     // resume from a mid-mission checkpoint if we're retrying after death
@@ -306,6 +317,10 @@ export class Game {
     if (this.player) this.player.driving = false;
     for (const p of this.players) { if (p !== this.player && p._avatar) this.scene.remove(p._avatar); }
     this.players = [];
+    clearGhosts(this);
+    if (this._hostAvatar) { this.scene.remove(this._hostAvatar); this._hostAvatar = null; }
+    if (this._svHudEl) { this._svHudEl.remove(); this._svHudEl = null; }
+    this._guestNetState = null; this._svNetState = null; this._guestPlayer = null; this._netEvents.length = 0;
     this._clearNadeModel();
     this._clearMeleeModel();
     if (this._viewModel) this._viewModel.visible = true;
@@ -335,8 +350,8 @@ export class Game {
         spawnProjectile: (opts) => { const pr = new Projectile(opts); this.projectiles.push(pr); this.scene.add(pr.mesh); },
         spawnTracer: (a, b) => this._spawnTracer(a, b),
         spawnImpact: (p, kind) => this._spawnImpact(p, kind),
-        spawnExplosion: (p, r) => this._spawnExplosion(p, r),
-        onTelegraph: (p, radius, duration, color) => this._spawnTelegraph(p, radius, duration, color),
+        spawnExplosion: (p, r) => { this._spawnExplosion(p, r); this._netPush('expl', p.x, p.y, p.z, r); },
+        onTelegraph: (p, radius, duration, color) => { this._spawnTelegraph(p, radius, duration, color); this._netPush('tel', p.x, p.z, radius, duration, color || 0xff5a5a); },
         onMuzzleFlash: (def) => this._muzzle(def),
         onHitmark: () => this.hud.hitMark(),
         shake: (a) => { this.shakeAmt = Math.max(this.shakeAmt, a); },
@@ -347,9 +362,9 @@ export class Game {
           this.hud.setPrompt(t && t.replace('[Interact]', this.isTouch ? 'Tap USE —' : 'Press ' + codeLabel(this.settings.bindings.interact) + ' —'));
         },
         interactPressed: false,
-        onObjective: (t) => this.hud.setObjective(t),
+        onObjective: (t) => { this.hud.setObjective(t); this._netPush('obj', t); },
         onDialogue: (lines) => this.hud.queueDialogue(lines),
-        onBanner: (a, b, s) => this.hud.banner(a, b, s),
+        onBanner: (a, b, s) => { this.hud.banner(a, b, s); this._netPush('banner', a, b, s); },
         onEscape: (t) => this.hud.setEscape(t),
         onPickup: () => {},
         onCheckpoint: (segment) => this._saveCheckpoint(segment),
@@ -392,6 +407,10 @@ export class Game {
     this.onResume && this.onResume();
   }
   quitToMenu() {
+    if (this.net) { try { this.net.close(); } catch (e) { /* already gone */ } this.net = null; }
+    if (this._pendingNet) { try { this._pendingNet.close(); } catch (e) { /* gone */ } this._pendingNet = null; }
+    this.coopRole = null; this._levelSeed = undefined;
+    this._clearCoopOverlay();
     this._teardownWorld();
     this.audio.stopAll();
     this.hud.show(false);
@@ -467,6 +486,13 @@ export class Game {
       if (res.grounded && rp.vel.y < 0) rp.vel.y = 0;
       rp._regen(dt, ctx);
       if (rp.weapon) rp.weapon.update(dt);
+    } else if (!rp.dead && rp._netInput) {
+      // Networked guest: trust the latest packet's transform, then run combat-only
+      // (Player.update remote branch) so the host resolves the guest's shots/etc.
+      const pkt = rp._netInput.latest;
+      if (pkt) { rp.pos.set(pkt.x, pkt.y, pkt.z); rp.yaw = pkt.yaw; rp.pitch = pkt.pitch; if (pkt.h) rp.curHeight = pkt.h; }
+      rp._netInput.beginFrame();
+      rp.update(dt, rp._netInput, this.settings, ctx);
     }
     this._syncAvatar(rp);
   }
@@ -476,6 +502,243 @@ export class Game {
     rp._avatar.visible = !rp.dead;
     rp._avatar.position.set(rp.pos.x, rp.pos.y, rp.pos.z);
     rp._avatar.rotation.y = rp.yaw;
+  }
+
+  // ---------- co-op: session start ----------
+  // queue a one-shot event for the next snapshot (no-op unless we're the host)
+  _netPush(k, ...d) { if (this.coopRole === 'host') this._netEvents.push([k, ...d]); }
+
+  // HOST: called once the guest's transport connects. Builds the shared-seed arena,
+  // drops the guest in as a networked player, and starts shipping snapshots.
+  startCoopHost(net) {
+    this.net = net; this.coopRole = 'host';
+    this._levelSeed = (Date.now() & 0x7fffffff) || 1;
+    this.missionIndex = 0; this._resume = false; this._runPerks = [];
+    this._beginMission(SURVIVAL_MISSION);
+    this.level.freeplay = true;
+    const gs = this.player.pos.clone(); gs.x += 4;                 // guest spawns beside the host
+    const guest = this.addRemotePlayer(gs, { color: 0xffb454, id: 'guest' });
+    guest._netInput = new NetInputProxy();
+    this._guestPlayer = guest;
+    net.on('input', (pkt) => { if (this._guestPlayer && this._guestPlayer._netInput) this._guestPlayer._netInput.feed(pkt); });
+    net.send('start', { seed: this._levelSeed, gs: { x: gs.x, y: gs.y, z: gs.z } });
+    this.survival = new Survival(this.root, this, () => this.quitToMenu());
+    this.survival.start();
+  }
+
+  // GUEST: register handlers as soon as we join; the world is built when the host's
+  // 'start' arrives (so we use its seed), then snapshots drive everything.
+  joinCoop(net) {
+    this.net = net; this.coopRole = 'guest';
+    net.on('start', (d) => this._beginCoopGuest(d));
+    net.on('snap', (snap) => { this._lastSnap = snap; applySnapshot(this, snap); });
+  }
+
+  _beginCoopGuest(d) {
+    if (this.level) { /* already built (duplicate start) */ return; }
+    this._levelSeed = d.seed;
+    this.missionIndex = 0; this._resume = false; this._runPerks = [];
+    this._beginMission(SURVIVAL_MISSION);
+    this.level.freeplay = true;
+    if (d.gs) { this.player.pos.set(d.gs.x, d.gs.y, d.gs.z); this.player._syncCamera(this.settings, 0); }
+    this._hostAvatar = this._makeBuddyAvatar(0x3d7bd6);            // the host, drawn from snapshots
+    this.scene.add(this._hostAvatar);
+    this._initGuestSurvivalHud();
+    this._clearCoopOverlay();
+  }
+
+  // ---------- co-op: lobby / connection ----------
+  _showCoopOverlay(html) {
+    this._clearCoopOverlay();
+    const el = document.createElement('div');
+    el.className = 'interactive coop-overlay';
+    el.innerHTML = `<div class="screen"><div class="coop-panel">${html}</div></div>`;
+    this.root.appendChild(el);
+    this._coopOverlayEl = el;
+    return el;
+  }
+  _clearCoopOverlay() { if (this._coopOverlayEl) { this._coopOverlayEl.remove(); this._coopOverlayEl = null; } }
+  _coopCancel(net) { try { net && net.close(); } catch (e) { /* gone */ } this._pendingNet = null; this._clearCoopOverlay(); this.onQuit && this.onQuit(); }
+
+  // HOST over Trystero relays: show a room code, wait for the guest, then begin.
+  coopHost() {
+    const code = makeRoomCode();
+    const net = hostTrystero(code); this._pendingNet = net;
+    const el = this._showCoopOverlay(`
+      <div class="coop-title">Hosting Co-op</div>
+      <div class="coop-sub">Send this code to your buddy — they pick <b>Join</b> and enter it:</div>
+      <div class="coop-code">${code}</div>
+      <button class="btn" data-act="copy">⧉ Copy Code</button>
+      <div class="coop-status">Waiting for a player to join…</div>
+      <button class="btn ghost" data-act="cancel">Cancel</button>`);
+    el.querySelector('[data-act="copy"]').addEventListener('click', () => { try { navigator.clipboard.writeText(code); } catch (e) {} });
+    el.querySelector('[data-act="cancel"]').addEventListener('click', () => this._coopCancel(net));
+    net.onState((s) => { if (s === 'connected' && this.coopRole !== 'host') { this._pendingNet = null; this._clearCoopOverlay(); this.startCoopHost(net); } });
+  }
+
+  // JOIN over Trystero relays: enter the host's code, connect, wait for 'start'.
+  coopJoin(code) {
+    const net = joinTrystero(code); this._pendingNet = net;
+    const el = this._showCoopOverlay(`
+      <div class="coop-title">Joining ${code}</div>
+      <div class="coop-status">Connecting to host…</div>
+      <button class="btn ghost" data-act="cancel">Cancel</button>`);
+    el.querySelector('[data-act="cancel"]').addEventListener('click', () => this._coopCancel(net));
+    this.joinCoop(net);
+    net.onState((s) => { if (s === 'connected') { const st = el.querySelector('.coop-status'); if (st) st.textContent = 'Connected — building arena…'; } });
+  }
+
+  // MANUAL host (no relays): produce an offer, paste back the guest's answer.
+  async coopHostManual() {
+    const net = createManual('host'); this._pendingNet = net;
+    const offer = await net.manual.createOffer();
+    const el = this._showCoopOverlay(`
+      <div class="coop-title">Manual Host (no relays)</div>
+      <div class="coop-sub">1. Copy this offer and send it to your buddy:</div>
+      <textarea class="coop-blob" readonly>${offer}</textarea>
+      <button class="btn" data-act="copy">⧉ Copy Offer</button>
+      <div class="coop-sub">2. Paste the answer they send back:</div>
+      <textarea class="coop-blob" data-field="answer" placeholder="Paste answer code…"></textarea>
+      <button class="btn primary" data-act="connect">Connect</button>
+      <div class="coop-status"></div>
+      <button class="btn ghost" data-act="cancel">Cancel</button>`);
+    el.querySelector('[data-act="copy"]').addEventListener('click', () => { try { navigator.clipboard.writeText(offer); } catch (e) {} });
+    el.querySelector('[data-act="cancel"]').addEventListener('click', () => this._coopCancel(net));
+    el.querySelector('[data-act="connect"]').addEventListener('click', async () => {
+      const ans = el.querySelector('[data-field="answer"]').value.trim();
+      const st = el.querySelector('.coop-status');
+      if (!ans) { st.textContent = 'Paste the answer code first.'; return; }
+      try { await net.manual.acceptAnswer(ans); st.textContent = 'Linking…'; } catch (e) { st.textContent = 'That answer code looks invalid.'; }
+    });
+    net.onState((s) => { if (s === 'connected' && this.coopRole !== 'host') { this._pendingNet = null; this._clearCoopOverlay(); this.startCoopHost(net); } });
+  }
+
+  // MANUAL join (no relays): paste the host's offer, generate an answer to send back.
+  coopJoinManual() {
+    const net = createManual('guest'); this._pendingNet = net;
+    const el = this._showCoopOverlay(`
+      <div class="coop-title">Manual Join (no relays)</div>
+      <div class="coop-sub">1. Paste the offer code from the host:</div>
+      <textarea class="coop-blob" data-field="offer" placeholder="Paste offer code…"></textarea>
+      <button class="btn primary" data-act="answer">Generate Answer</button>
+      <div class="coop-sub coop-hidden" data-row="answer">2. Copy this answer and send it back to the host:</div>
+      <textarea class="coop-blob coop-hidden" data-field="answerout" data-row="answer" readonly></textarea>
+      <button class="btn coop-hidden" data-act="copy" data-row="answer">⧉ Copy Answer</button>
+      <div class="coop-status"></div>
+      <button class="btn ghost" data-act="cancel">Cancel</button>`);
+    this.joinCoop(net);
+    el.querySelector('[data-act="cancel"]').addEventListener('click', () => this._coopCancel(net));
+    el.querySelector('[data-act="answer"]').addEventListener('click', async () => {
+      const offer = el.querySelector('[data-field="offer"]').value.trim();
+      const st = el.querySelector('.coop-status');
+      if (!offer) { st.textContent = 'Paste the offer code first.'; return; }
+      try {
+        const answer = await net.manual.acceptOffer(offer);
+        el.querySelector('[data-field="answerout"]').value = answer;
+        el.querySelectorAll('[data-row="answer"]').forEach((n) => n.classList.remove('coop-hidden'));
+        st.textContent = 'Waiting for the host to connect…';
+      } catch (e) { st.textContent = 'That offer code looks invalid.'; }
+    });
+    el.querySelector('[data-act="copy"]').addEventListener('click', () => { try { navigator.clipboard.writeText(el.querySelector('[data-field="answerout"]').value); } catch (e) {} });
+  }
+
+  _initGuestSurvivalHud() {
+    const el = document.createElement('div');
+    el.className = 'survival-hud';
+    el.innerHTML = `<div class="sv-wave"></div><div class="sv-score"></div><div class="sv-foe"></div>`;
+    this.root.appendChild(el);
+    this._svHudEl = el;
+  }
+
+  // GUEST update: predict our own movement/aim locally, forward input to the host,
+  // and render the rest of the world (enemy/projectile ghosts, host avatar) from
+  // the latest snapshot. No AI, no authoritative damage — the host owns all that.
+  _updateGuest(dt) {
+    if (this.isTouch && this.touch) { const fire = this.touch.fireHeld || this.touch.tapFire; this.touch.tapFire = false; this.input.setVirtual('fire', fire); }
+    this.input.beginFrame();
+    const ctx = this._ctx();
+    this.settings._adsActive = this.input.isDown('ads') && this.player.weapon != null;
+    const scoped = !!(this.settings._adsActive && this.player.weapon && this.player.weapon.def.scoped);
+    if (scoped !== this._scoped) { this._scoped = scoped; this.audio.sfx(scoped ? 'scopein' : 'scopeout'); }
+
+    this.player.updateGuest(dt, this.input, this.settings, ctx);
+    this._setViewModel(this.player.weapon ? this.player.weapon.key : null);
+    this._guestFireCosmetic(dt);
+    this._updateViewModel(dt, scoped);
+
+    this._netInputAccum += dt;
+    if (this._netInputAccum >= NET_INPUT_DT && this.net) {
+      this._netInputAccum = 0;
+      this.net.send('input', serializeInput(this.player, this.input, this.touch, ++this._netSeq));
+    }
+
+    interpolateGhosts(this, dt);
+    this._updateGuestHud(dt, scoped);
+    if (this.aureole) this.aureole.rotation.z += dt * 0.01;
+    this.input.endFrame();
+  }
+
+  // Local-only fire feedback for the guest (muzzle flash + sfx). Damage and ammo
+  // are the host's; we just make pulling the trigger feel alive. Gated by the
+  // host-reported ammo so an empty mag stays quiet.
+  _guestFireCosmetic(dt) {
+    if (this._guestFireCd > 0) this._guestFireCd -= dt;
+    const w = this.player.weapon; if (!w) return;
+    const def = w.def;
+    const gp = this._guestNetState;
+    if (gp && gp.ammo <= 0) return;
+    const alt = this.input.isDown('ads') && def.alt;
+    const wantFire = def.auto ? this.input.isDown('fire') : this.input.pressed('fire');
+    if (wantFire && this._guestFireCd <= 0) {
+      this._guestFireCd = 1 / ((alt ? def.alt.fireRate : def.fireRate) || 4);
+      this.audio.sfx((alt && def.alt.sfx) ? def.alt.sfx : def.sfx);
+      this._muzzle(def);
+      this.player.justFired = 0.06;
+    }
+  }
+
+  _updateGuestHud(dt, scoped) {
+    const gp = this._guestNetState;
+    const hs = gp ? {
+      shield: gp.shield, shieldMax: gp.shieldMax, health: gp.health, healthMax: gp.healthMax,
+      weapon: gp.weapon, altName: gp.altName, stowed: null, reticle: gp.reticle,
+      ammo: gp.ammo, reserve: gp.reserve, reloading: gp.reloading,
+      grenades: gp.grenades, grenadeType: gp.grenadeType, cook: gp.cook,
+      dmgSfx: null, hitFlash: false, lowShield: gp.shield <= 0 && gp.health < gp.healthMax * 0.5,
+      scoped, scopeZoom: scoped && this.player.weapon ? this.player.weapon.def.adsZoom : 0, driving: false,
+    } : this.player.hudState();
+    const ghostEnemies = [];
+    for (const [, g] of this._ghosts) if (!g.dead) ghostEnemies.push({ pos: g.mesh.position });
+    this.hud.update(dt, hs, ghostEnemies, this.player);
+    if (this._svHudEl && this._svNetState) {
+      const s = this._svNetState;
+      this._svHudEl.querySelector('.sv-wave').textContent = 'WAVE ' + (s[0] || '—');
+      this._svHudEl.querySelector('.sv-score').textContent = 'SCORE ' + s[1];
+      this._svHudEl.querySelector('.sv-foe').textContent = s[2] === 'fighting' ? s[3] + ' left' : s[2] === 'breather' ? 'next wave…' : '';
+    }
+  }
+
+  // weapon viewmodel kick + sway — shared by solo/host (_updatePlay) and guest
+  _updateViewModel(dt, scoped) {
+    if (this._viewModel) {
+      this._viewModel.visible = !scoped && !this.player.driving && !this._nadeModel && !this._meleeModel;
+      const w = this.player.weapon;
+      let dip = 0, roll = 0;
+      if (w && w.reloading > 0) {
+        const p = Math.max(0, Math.min(1, 1 - w.reloading / w.def.reloadTime));
+        const s = Math.sin(p * Math.PI);
+        dip = s * 0.22; roll = s * 0.6;
+      }
+      const target = -0.6 - (this._vmKick || 0);
+      this._viewModel.position.z += (target - this._viewModel.position.z) * Math.min(1, dt * 18);
+      if (this._vmKick) this._vmKick = Math.max(0, this._vmKick - dt * 0.8);
+      const adsing = this.settings._adsActive;
+      this._viewModel.position.x += ((adsing ? 0.0 : 0.28) - this._viewModel.position.x) * Math.min(1, dt * 10);
+      this._viewModel.position.y += (((adsing ? -0.16 : -0.26) - dip) - this._viewModel.position.y) * Math.min(1, dt * 10);
+      this._viewModel.rotation.x += (0 - this._viewModel.rotation.x) * Math.min(1, dt * 10);
+      this._viewModel.rotation.z += (roll - this._viewModel.rotation.z) * Math.min(1, dt * 12);
+    }
+    if (this._muzzleLight.intensity > 0) this._muzzleLight.intensity = Math.max(0, this._muzzleLight.intensity - dt * 200);
   }
 
   _saveCheckpoint(segment) {
@@ -723,7 +986,10 @@ export class Game {
     let scale = 1;
     if (this._slowmoT > 0 && !this._reducedMotion) { this._slowmoT -= dt; scale = 0.4; }
 
-    if (this.state === 'playing') this._updatePlay(dt * scale);
+    if (this.state === 'playing') {
+      if (this.coopRole === 'guest') this._updateGuest(dt);   // thin client: predict + render from snapshots
+      else this._updatePlay(dt * scale);                      // solo or co-op host: full sim
+    }
     this._updateFX(dt);
 
     // screen shake (suppressed for users who prefer reduced motion)
@@ -814,28 +1080,7 @@ export class Game {
     this._updateNadeModel(dt);
     this._updateMeleeModel(dt);
 
-    // weapon viewmodel kick + sway (hidden while scoped, punching, or holding a grenade)
-    if (this._viewModel) {
-      this._viewModel.visible = !scoped && !this.player.driving && !this._nadeModel && !this._meleeModel;
-      // reload pose: dip the gun down and roll it in toward the magazine,
-      // following the reload timer so it eases out and back on its own
-      const w = this.player.weapon;
-      let dip = 0, roll = 0;
-      if (w && w.reloading > 0) {
-        const p = Math.max(0, Math.min(1, 1 - w.reloading / w.def.reloadTime));
-        const s = Math.sin(p * Math.PI);
-        dip = s * 0.22; roll = s * 0.6;
-      }
-      const target = -0.6 - (this._vmKick || 0);
-      this._viewModel.position.z += (target - this._viewModel.position.z) * Math.min(1, dt * 18);
-      if (this._vmKick) this._vmKick = Math.max(0, this._vmKick - dt * 0.8);
-      const adsing = this.settings._adsActive;
-      this._viewModel.position.x += ((adsing ? 0.0 : 0.28) - this._viewModel.position.x) * Math.min(1, dt * 10);
-      this._viewModel.position.y += (((adsing ? -0.16 : -0.26) - dip) - this._viewModel.position.y) * Math.min(1, dt * 10);
-      this._viewModel.rotation.x += (0 - this._viewModel.rotation.x) * Math.min(1, dt * 10);
-      this._viewModel.rotation.z += (roll - this._viewModel.rotation.z) * Math.min(1, dt * 12);
-    }
-    if (this._muzzleLight.intensity > 0) this._muzzleLight.intensity = Math.max(0, this._muzzleLight.intensity - dt * 200);
+    this._updateViewModel(dt, scoped);
 
     // play audio for damage events
     const hs = this.player.hudState();
@@ -875,6 +1120,12 @@ export class Game {
 
     // player death (Survival runs its own game-over; campaign rooms use onFail)
     if (this.player.dead && this.state === 'playing' && !this.survival) ctx.onFail('Sgt. Orion is down. The eulogy will have to wait.');
+
+    // co-op host: ship the world to the guest at NET_SNAP_HZ
+    if (this.coopRole === 'host' && this.net) {
+      this._netSnapAccum += dt;
+      if (this._netSnapAccum >= NET_SNAP_DT) { this._netSnapAccum = 0; this.net.send('snap', serializeSnapshot(this)); }
+    }
 
     this.input.endFrame();
   }

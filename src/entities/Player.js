@@ -140,6 +140,20 @@ export class Player {
 
   update(dt, input, settings, ctx) {
     if (this.dead) return;
+    if (this.remote) {
+      // Co-op host-side guest: its transform is applied from the network just
+      // before this call. We run shields + combat so the HOST authoritatively
+      // resolves the guest's shots/reloads/swaps/grenades through the same code
+      // paths as any player — movement/look are trusted from the packet, so we
+      // skip _look/_move/_syncCamera (no real camera on a remote player anyway).
+      this._regen(dt, ctx);
+      if (this.weapon) this.weapon.update(dt);
+      this._combat(dt, input, ctx);
+      if (this.meleeCd > 0) this.meleeCd -= dt;
+      if (this.lastHitFlash > 0) this.lastHitFlash -= dt;
+      if (this.justFired > 0) this.justFired -= dt;
+      return;
+    }
     if (this.driving) {
       // While mounted, the Vehicle owns movement + camera. Keep shields/weapons ticking.
       this._regen(dt, ctx);
@@ -155,6 +169,18 @@ export class Player {
     if (this.meleeCd > 0) this.meleeCd -= dt;
     if (this.lastHitFlash > 0) this.lastHitFlash -= dt;
     if (this.justFired > 0) this.justFired -= dt;
+    this._syncCamera(settings, dt);
+  }
+
+  // Co-op guest-side: this client's OWN player. We predict movement + look
+  // locally (instant, responsive) against our local copy of the arena, and ship
+  // the resulting transform to the host. Firing/shields/ammo are the host's job
+  // (mirrored back via snapshot), so no _combat/_regen here — the host runs them.
+  updateGuest(dt, input, settings, ctx) {
+    if (this.dead) { this._syncCamera(settings, dt); return; }
+    this._look(input, settings);
+    this._move(dt, input, settings, ctx);
+    if (this.weapon) this.weapon.update(dt); // keep the view-model cooldown honest
     this._syncCamera(settings, dt);
   }
 

@@ -42,6 +42,7 @@ export class Menus {
           <button class="btn" data-act="continue" ${hasProgress ? '' : 'disabled'}>↻ Continue${hasProgress ? ' — Mission ' + (p.unlocked + 1) : ''}</button>
           <button class="btn" data-act="tutorial">🎓 Tutorial</button>
           <button class="btn" data-act="survival">💀 Survival</button>
+          <button class="btn" data-act="coop">🛰 Co-op Survival (2P)</button>
           <button class="btn" data-act="select">☰ Mission Select</button>
           <button class="btn" data-act="settings">⚙ Settings</button>
           <button class="btn ghost" data-act="credits">ℹ Credits</button>
@@ -58,6 +59,7 @@ export class Menus {
       else if (a === 'continue') this.h.onStart(loadProgress().unlocked);
       else if (a === 'tutorial') this.h.onTutorial && this.h.onTutorial();
       else if (a === 'survival') this.h.onSurvival && this.h.onSurvival();
+      else if (a === 'coop') this.showCoop();
       else if (a === 'select') this.showMissionSelect();
       else if (a === 'settings') this.showSettings('controls', () => this.showMain());
       else if (a === 'credits') this.showCredits();
@@ -183,6 +185,56 @@ export class Menus {
         </div>
       </div>`;
     this.el.querySelector('[data-act="back"]').addEventListener('click', () => { this._click(); this.showMain(); });
+  }
+
+  // ---------------- Co-op lobby ----------------
+  showCoop() {
+    this.clear();
+    this.screen = 'coop';
+    this.el.innerHTML = `
+      <div class="screen">
+        <div class="title-block">
+          <div class="game-sub" style="color:var(--ink)">Co-op Survival</div>
+          <div class="game-tag">Team up with one friend — direct peer-to-peer, no account, no server. Hold the line together.</div>
+        </div>
+        <div class="menu-list">
+          <button class="btn primary" data-act="host">🛰 Host Game</button>
+          <div class="coop-join-row">
+            <input class="coop-code-input" data-field="code" placeholder="Enter code · e.g. WBL-AB3KD" maxlength="12" autocomplete="off" spellcheck="false" />
+            <button class="btn" data-act="join">Join</button>
+          </div>
+          <button class="btn ghost" data-act="manual">⌥ Manual connect (no relays)</button>
+          <button class="btn ghost" data-act="back">← Back</button>
+        </div>
+        <div class="menu-footer">Host shares the code; the other player picks <b>Join</b> and enters it. Works on most home networks; if a strict firewall blocks the connection, try <b>Manual connect</b>.</div>
+      </div>`;
+    const code = this.el.querySelector('[data-field="code"]');
+    const doJoin = () => { const c = (code.value || '').trim().toUpperCase(); if (c) { this._click(); this.h.onCoopJoin && this.h.onCoopJoin(c); } };
+    this.el.querySelector('[data-act="host"]').addEventListener('click', () => { this._click(); this.h.onCoopHost && this.h.onCoopHost(); });
+    this.el.querySelector('[data-act="join"]').addEventListener('click', doJoin);
+    code.addEventListener('keydown', (e) => { if (e.code === 'Enter') { e.preventDefault(); doJoin(); } });
+    this.el.querySelector('[data-act="manual"]').addEventListener('click', () => { this._click(); this.showCoopManual(); });
+    this.el.querySelector('[data-act="back"]').addEventListener('click', () => { this._click(); this.showMain(); });
+  }
+
+  showCoopManual() {
+    this.clear();
+    this.screen = 'coop-manual';
+    this.el.innerHTML = `
+      <div class="screen">
+        <div class="title-block">
+          <div class="game-sub" style="color:var(--ink)">Manual Connect</div>
+          <div class="game-tag">No relays — paste connection codes directly (Discord, text…). One hosts, the other joins.</div>
+        </div>
+        <div class="menu-list">
+          <button class="btn primary" data-act="host">Host — create an offer</button>
+          <button class="btn" data-act="join">Join — paste an offer</button>
+          <button class="btn ghost" data-act="back">← Back</button>
+        </div>
+      </div>`;
+    this.el.querySelector('[data-act="host"]').addEventListener('click', () => { this._click(); this.h.onCoopHostManual && this.h.onCoopHostManual(); });
+    this.el.querySelector('[data-act="join"]').addEventListener('click', () => { this._click(); this.h.onCoopJoinManual && this.h.onCoopJoinManual(); });
+    this.el.querySelector('[data-act="back"]').addEventListener('click', () => { this._click(); this.showCoop(); });
   }
 
   // ---------------- Mission select ----------------

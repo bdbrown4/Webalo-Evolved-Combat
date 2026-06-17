@@ -7,8 +7,11 @@
 import * as THREE from 'three';
 import { AssetFactory } from '../core/AssetFactory.js';
 
+let _pidCounter = 1;
+
 export class Projectile {
   constructor(opts) {
+    this.id = _pidCounter++;          // stable id for co-op ghost reconciliation
     this.type = opts.type;            // 'goo' | 'shard' | 'grenade' | 'bossbolt' | enemy 'goo'
     this.owner = opts.owner;          // 'player' | 'enemy'
     this.pos = opts.pos.clone();

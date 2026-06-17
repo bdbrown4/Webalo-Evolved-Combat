@@ -409,9 +409,10 @@ export class Game {
     this.onResume && this.onResume();
   }
   quitToMenu() {
-    if (this.net) { try { this.net.close(); } catch (e) { /* already gone */ } this.net = null; }
+    // null the role/net BEFORE closing so our own close doesn't read as "partner left"
+    const net = this.net; this.net = null; this.coopRole = null; this._levelSeed = undefined; this._coopLeft = false; this._coopOver = false;
+    if (net) { try { net.close(); } catch (e) { /* already gone */ } }
     if (this._pendingNet) { try { this._pendingNet.close(); } catch (e) { /* gone */ } this._pendingNet = null; }
-    this.coopRole = null; this._levelSeed = undefined;
     this._clearCoopOverlay();
     this._teardownWorld();
     this.audio.stopAll();
@@ -523,8 +524,10 @@ export class Game {
     guest._netInput = new NetInputProxy();
     this._guestPlayer = guest;
     this.player.downable = true; guest.downable = true;            // co-op: 0 HP downs, doesn't kill
-    this._coopOver = false;
+    this._coopOver = false; this._coopLeft = false;
     net.on('input', (pkt) => { if (this._guestPlayer && this._guestPlayer._netInput) this._guestPlayer._netInput.feed(pkt); });
+    net.on('retryReq', () => { if (this._coopOver) this._coopRetry(); });
+    net.onState((s) => { if (s === 'closed') this._onPeerLeft(); });
     net.send('start', { seed: this._levelSeed, gs: { x: gs.x, y: gs.y, z: gs.z } });
     this.survival = new Survival(this.root, this, () => this.quitToMenu());
     this.survival.start();
@@ -534,12 +537,14 @@ export class Game {
   // 'start' arrives (so we use its seed), then snapshots drive everything.
   joinCoop(net) {
     this.net = net; this.coopRole = 'guest';
+    this._coopOver = false; this._coopLeft = false;
     net.on('start', (d) => this._beginCoopGuest(d));
     net.on('snap', (snap) => { this._lastSnap = snap; applySnapshot(this, snap); });
+    net.onState((s) => { if (s === 'closed') this._onPeerLeft(); });
   }
 
   _beginCoopGuest(d) {
-    if (this.level) { /* already built (duplicate start) */ return; }
+    // each 'start' (re)builds the world — initial join AND co-op retries arrive here
     this._levelSeed = d.seed;
     this.missionIndex = 0; this._resume = false; this._runPerks = [];
     this._beginMission(SURVIVAL_MISSION);
@@ -666,9 +671,8 @@ export class Game {
   }
 
   // Shared co-op game-over — shown on BOTH peers (guest gets it via the 'coopover'
-  // event). Persistent stay-connected lobby + Retry lands in the next slice.
+  // event). The session STAYS connected: Retry re-runs together with no re-handshake.
   _showCoopOver(wave, score) {
-    if (this.state === 'result') { /* already over */ }
     this.audio.sfx('lose');
     this._setPlayInput(false); this.input.exitLock();
     this.state = 'result';
@@ -678,8 +682,40 @@ export class Game {
     this._clearCoopHud();
     const el = this._showCoopOverlay(`
       <div class="coop-title">You Both Fell</div>
-      <div class="coop-sub" style="text-align:center">Wave <b>${wave}</b> · Score <b>${score}</b></div>
-      <div class="coop-status">The Wobble Coalition is insufferably pleased with itself.</div>
+      <div class="coop-sub" style="text-align:center">Wave <b>${wave}</b> · Score <b>${score}</b> — still linked up.</div>
+      <button class="btn primary" data-act="retry">↻ Retry Together</button>
+      <div class="coop-status"></div>
+      <button class="btn ghost" data-act="leave">⏏ Leave to Menu</button>`);
+    el.querySelector('[data-act="retry"]').addEventListener('click', () => this._coopRetry(el));
+    el.querySelector('[data-act="leave"]').addEventListener('click', () => this.quitToMenu());
+  }
+
+  // Retry from the shared lobby. Host-authoritative: the host rebuilds (fresh seed,
+  // both players respawned) and re-sends 'start'; the guest just asks the host to.
+  _coopRetry(el) {
+    if (this.coopRole === 'host') {
+      if (!this._coopOver) return;                 // only valid from the game-over lobby
+      this._clearCoopOverlay();
+      this.startCoopHost(this.net);                // new arena + new 'start' → guest rebuilds
+    } else {
+      if (this.net) this.net.send('retryReq', 1);
+      this._coopSetStatus(el, 'Asking the host to restart…');
+    }
+  }
+
+  // A peer's transport dropped. Tell whoever's left and offer the exit.
+  _onPeerLeft() {
+    if (!this.coopRole || this._coopLeft) return;
+    this._coopLeft = true;
+    this._setPlayInput(false); this.input.exitLock();
+    this.state = 'result';
+    this.hud.show(false);
+    if (this.survival && this.survival.hudEl) this.survival.hudEl.classList.add('hidden');
+    if (this._svHudEl) this._svHudEl.style.display = 'none';
+    this._clearCoopHud();
+    const el = this._showCoopOverlay(`
+      <div class="coop-title">Partner Disconnected</div>
+      <div class="coop-sub" style="text-align:center">Your co-op partner left the session.</div>
       <button class="btn ghost" data-act="leave">⏏ Leave to Menu</button>`);
     el.querySelector('[data-act="leave"]').addEventListener('click', () => this.quitToMenu());
   }

@@ -21,6 +21,12 @@ export class Input {
     this._rebindResolver = null;     // fn(code) when capturing a rebind
     this._onLockChange = null;
 
+    // gamepad: polled each frame, drives the SAME virtual layer as touch
+    this._gpActive = false;
+    this._gpAsserted = new Set();    // virtuals the pad currently holds (so it only clears its own)
+    this._gpStartPrev = false;
+    this._gpStartEdge = false;
+
     this._bind();
   }
 
@@ -41,6 +47,52 @@ export class Input {
   // Touch look: feed deltas straight into the accumulator the mouse uses. Pointer
   // lock never engages on touch, so this is gated on `enabled` only (not `locked`).
   addLook(dx, dy) { if (this.enabled) { this.mouseDX += dx; this.mouseDY += dy; } }
+
+  // ---- Gamepad ------------------------------------------------------------
+  // Polled once per frame BEFORE beginFrame(). Maps a standard controller onto
+  // the virtual action layer + look accumulator, so a pad plays exactly like
+  // mouse+keyboard/touch. Standard mapping (Xbox-style): left stick = move,
+  // right stick = look, RT fire, LT ADS, A jump, B melee, X reload, Y swap,
+  // RB grenade, LB interact, L3 crouch, Start pause. It only clears the virtuals
+  // it set, so it never stomps keyboard (which OR together) or touch.
+  pollGamepad() {
+    const pads = (typeof navigator !== 'undefined' && navigator.getGamepads) ? navigator.getGamepads() : [];
+    let gp = null;
+    for (const p of pads) { if (p && p.connected) { gp = p; break; } }
+    this._gpActive = !!gp;
+    const next = new Set();
+    if (gp) {
+      const DZ = 0.18, LOOK = 22;
+      const dz = (v) => (Math.abs(v) < DZ ? 0 : v);
+      const a = gp.axes, b = gp.buttons;
+      const down = (i) => !!(b[i] && (b[i].pressed || b[i].value > 0.5));
+      // move (left stick)
+      const lx = dz(a[0] || 0), ly = dz(a[1] || 0);
+      if (ly < -0.2) next.add('forward');
+      if (ly > 0.2) next.add('back');
+      if (lx < -0.2) next.add('left');
+      if (lx > 0.2) next.add('right');
+      if (Math.hypot(lx, ly) > 0.92 && ly < -0.4) next.add('sprint');
+      // look (right stick) — squared response for fine aim, fed like mouse delta
+      const rx = dz(a[2] || 0), ry = dz(a[3] || 0);
+      if (rx || ry) this.addLook(rx * Math.abs(rx) * LOOK, ry * Math.abs(ry) * LOOK);
+      // buttons -> actions
+      if (down(7)) next.add('fire');      if (down(6)) next.add('ads');
+      if (down(0)) next.add('jump');      if (down(1)) next.add('melee');
+      if (down(2)) next.add('reload');    if (down(3)) next.add('swap');
+      if (down(5)) next.add('grenade');   if (down(4)) next.add('interact');
+      if (down(10)) next.add('crouch');
+      const start = down(9);
+      if (start && !this._gpStartPrev) this._gpStartEdge = true;
+      this._gpStartPrev = start;
+    } else {
+      this._gpStartPrev = false;
+    }
+    for (const act of next) this.setVirtual(act, true);
+    for (const act of this._gpAsserted) if (!next.has(act)) this.setVirtual(act, false);
+    this._gpAsserted = next;
+  }
+  consumeGamepadPause() { const e = this._gpStartEdge; this._gpStartEdge = false; return e; }
 
   requestLock() { if (this.canvas.requestPointerLock) this.canvas.requestPointerLock(); }
   exitLock() { if (document.exitPointerLock) document.exitPointerLock(); }

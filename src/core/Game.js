@@ -610,6 +610,17 @@ export class Game {
 
   // ---------- the loop ----------
   update() {
+    // controller -> virtual input (before the play step reads it this frame)
+    this.input.pollGamepad();
+    if (this.input._gpActive && !this._gpWasActive && this.state === 'playing') this.hud.banner('CONTROLLER', 'Gamepad connected.', 1.4);
+    this._gpWasActive = this.input._gpActive;
+    if (this.input.consumeGamepadPause()) {
+      if (this.state === 'playing') this.togglePause();
+      else if (this.state === 'paused') this.resume();
+    }
+    // gamepad needs no pointer lock — don't let the click-to-resume prompt block it
+    if (this.input._gpActive && this.state === 'playing' && this.focusPrompt) this.focusPrompt.classList.add('hidden');
+
     let dt = this._clock.getDelta();
     if (dt > 0.05) dt = 0.05; // clamp big frame gaps (tab switch)
 

@@ -126,6 +126,7 @@ export class Survival {
     const air = type === 'floater' || type === 'wobbler';
     const e = ctx.spawnEnemy(type, new THREE.Vector3(x, air ? 2.2 : 0.1, z));
     if (air) e.hover = true;
+    e.hunt = true;                 // horde: always charge the player, never camp out of range
     room.enemies.push(e);
     return e;
   }

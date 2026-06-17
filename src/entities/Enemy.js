@@ -26,6 +26,7 @@ export class Enemy {
     this.facing = 0;
     this.attackCd = Math.random() * 1.2;
     this.alertT = 0;
+    this.hunt = false;         // relentless pursuit regardless of range (Survival horde)
     this.wobble = Math.random() * Math.PI * 2;
     this.chargeT = 0;          // gurg charge windup
     this.deathT = 0;
@@ -89,7 +90,9 @@ export class Enemy {
 
     // perception
     if (this.state === 'idle') {
-      if (dist < 26 && ctx.physics.hasLineOfSight(this.aimPoint(), player.headPoint())) { this.state = 'alert'; this.alertT = 0.4; this._squeak(ctx); }
+      // Normal enemies wake on sight within range; hunters (Survival horde) lock
+      // on immediately and chase from anywhere on the map.
+      if (this.hunt || (dist < 26 && ctx.physics.hasLineOfSight(this.aimPoint(), player.headPoint()))) { this.state = 'alert'; this.alertT = 0.4; this._squeak(ctx); }
     }
     if (this.alertT > 0) this.alertT -= dt;
 

@@ -29,6 +29,8 @@ export class Enemy {
     this.hunt = false;         // relentless pursuit regardless of range (Survival horde)
     this.wobble = Math.random() * Math.PI * 2;
     this.chargeT = 0;          // gurg charge windup
+    this.fuseT = 0;            // popper detonation fuse
+    this.blinkCd = 1.4 + Math.random() * 1.4; // blinker teleport timer
     this.deathT = 0;
     this.bossPhase = 1;
     this.bossActT = 2;
@@ -43,6 +45,23 @@ export class Enemy {
 
   takeDamage(amount, opts = {}) {
     if (this.dead) return;
+    // Bulwark: a heavy frontal shield. Hits landing on the front it's facing are
+    // mostly deflected — you have to flank it (its facing turns slowly).
+    if (this.meta.kind === 'bulwark' && opts.source) {
+      const toSrc = new THREE.Vector3().subVectors(opts.source, this.pos).setY(0);
+      if (toSrc.lengthSq() > 0.001) {
+        toSrc.normalize();
+        const face = new THREE.Vector3(Math.sin(this.facing), 0, Math.cos(this.facing));
+        if (toSrc.dot(face) > 0.35) {
+          amount *= 0.15;
+          const plate = this.mesh.userData.plate;
+          if (plate && plate.material.emissive) {
+            plate.material.emissive.setHex(0x9fd0ff); plate.material.emissiveIntensity = 0.9;
+            setTimeout(() => { if (plate.material) plate.material.emissiveIntensity = 0; }, 80);
+          }
+        }
+      }
+    }
     let dmg = amount;
     if (this.shield > 0) {
       const sd = dmg * (opts.shieldMult || 1);
@@ -97,9 +116,15 @@ export class Enemy {
     if (this.alertT > 0) this.alertT -= dt;
 
     if (this.state !== 'idle') {
-      this.facing = Math.atan2(flat.x, flat.z);
+      // Bulwark turns slowly (handled in _bulwark) so its frontal shield can be
+      // flanked; everyone else snaps to face the player.
+      if (this.meta.kind !== 'bulwark') this.facing = Math.atan2(flat.x, flat.z);
       if (this.type === 'boss') this._boss(dt, ctx, dist, flat);
       else if (this.meta.kind === 'sprocket') this._sprocket(dt, ctx, dist, flat);
+      else if (this.meta.kind === 'popper') this._popper(dt, ctx, dist, flat);
+      else if (this.meta.kind === 'medic') this._medic(dt, ctx, dist, flat);
+      else if (this.meta.kind === 'bulwark') this._bulwark(dt, ctx, dist, flat);
+      else if (this.meta.kind === 'blinker') this._blinker(dt, ctx, dist, flat);
       else if (this.meta.kind === 'ranged') this._ranged(dt, ctx, dist, flat);
       else if (this.meta.kind === 'charger') this._charger(dt, ctx, dist, flat);
       else this._melee(dt, ctx, dist, flat);
@@ -225,6 +250,90 @@ export class Enemy {
         ctx.spawnProjectile && ctx.spawnProjectile({ type: 'goo', owner: 'enemy', pos: origin, vel, damage: this.meta.dmg, gravity: -8, splash: 1.5, life: 4 });
         ctx.audio && ctx.audio.sfx('goocaster');
       }
+    }
+  }
+
+  // Goober Popper — a fast suicide rusher. Sprints at you and, on contact, lights
+  // a short fuse, then detonates in a goo blast. Kill it at range to stay clear.
+  _popper(dt, ctx, dist, flat) {
+    this.state = 'chase';
+    if (this.fuseT > 0) {
+      this.vel.x = 0; this.vel.z = 0;
+      this.fuseT -= dt;
+      const core = this.mesh.userData.popCore;
+      if (core) core.material.emissiveIntensity = 0.8 + Math.abs(Math.sin(this.wobble * 9)) * 1.5;
+      if (this.fuseT <= 0) this._detonate(ctx);
+      return;
+    }
+    this.vel.x = flat.x * this.speed; this.vel.z = flat.z * this.speed;
+    if (dist < this.meta.range) { this.fuseT = 0.45; ctx.audio && ctx.audio.sfx('nadetick'); }
+  }
+  _detonate(ctx) {
+    const R = 4.4;
+    ctx.spawnExplosion && ctx.spawnExplosion(this.pos.clone().setY(1.0), R);
+    if (ctx.player.pos.distanceTo(this.pos) < R) ctx.player.takeDamage(this.meta.dmg, this.pos);
+    ctx.shake && ctx.shake(0.5);
+    ctx.audio && ctx.audio.sfx('explosion');
+    this._die(ctx.player.pos);
+  }
+
+  // Mendbot — a floating support drone. No attack; it hangs back and pulses heals
+  // (plus a little shield) into the nearest wounded ally. Kill it first.
+  _medic(dt, ctx, dist, flat) {
+    this.state = 'alert';
+    const pref = 14;
+    let move = 0;
+    if (dist < pref) move = -this.speed; else if (dist > pref + 7) move = this.speed * 0.6;
+    this.vel.x = flat.x * move; this.vel.z = flat.z * move;
+    if (this.hover) this.pos.y = 2.4 + Math.sin(this.wobble * 0.5) * 0.3;
+    this.attackCd -= dt;
+    if (this.attackCd <= 0) {
+      this.attackCd = 1.6;
+      let best = null, bestD = 16;
+      for (const e of (ctx.enemies || [])) {
+        if (e === this || e.dead || e.meta.kind === 'medic') continue;
+        if (e.hp >= e.maxHp && e.shield >= e.maxShield) continue;
+        const d = this.pos.distanceTo(e.pos);
+        if (d < bestD) { bestD = d; best = e; }
+      }
+      if (best) {
+        best.hp = Math.min(best.maxHp, best.hp + 14);
+        if (best.maxShield) best.shield = Math.min(best.maxShield, best.shield + 8);
+        ctx.spawnImpact && ctx.spawnImpact(best.aimPoint(), 'heal');     // green pulse on the ally
+        ctx.spawnImpact && ctx.spawnImpact(this.aimPoint(), 'heal');
+        ctx.audio && ctx.audio.sfx('shieldrecharge');
+      }
+    }
+  }
+
+  // Bulwark Blob — slow, very tanky, with a frontal shield (see takeDamage). It
+  // grinds toward you and bashes up close; circle-strafe to hit its open back.
+  _bulwark(dt, ctx, dist, flat) {
+    this.state = 'chase';
+    const target = Math.atan2(flat.x, flat.z);
+    let d = target - this.facing;
+    while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2;
+    this.facing += d * Math.min(1, dt * 1.7);          // slow turn -> flankable
+    const want = dist > this.meta.range * 0.85 ? this.speed : 0;
+    this.vel.x = flat.x * want; this.vel.z = flat.z * want;
+    this.attackCd -= dt;
+    if (dist < this.meta.range && this.attackCd <= 0) { this.attackCd = 1.3; ctx.player.takeDamage(this.meta.dmg, this.pos); }
+  }
+
+  // Blip — a ranged harasser that teleports every couple of seconds to throw off
+  // your aim. Lead it, or catch it right after it blinks.
+  _blinker(dt, ctx, dist, flat) {
+    this._ranged(dt, ctx, dist, flat);                 // base: keep range + lob goo
+    this.blinkCd -= dt;
+    if (this.blinkCd <= 0) {
+      this.blinkCd = 1.3 + Math.random() * 1.5;
+      ctx.spawnImpact && ctx.spawnImpact(this.aimPoint(), 'blink');
+      const ang = Math.random() * Math.PI * 2, hop = 5 + Math.random() * 3;
+      this.pos.x += Math.cos(ang) * hop;
+      this.pos.z += Math.sin(ang) * hop;
+      this.mesh.position.copy(this.pos);
+      ctx.spawnImpact && ctx.spawnImpact(this.aimPoint(), 'blink');
+      ctx.audio && ctx.audio.sfx('scopein');
     }
   }
 

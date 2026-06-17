@@ -14,7 +14,7 @@ import * as THREE from 'three';
 import { AssetFactory } from '../core/AssetFactory.js';
 import { normalizeMission } from '../missions/schema.js';
 
-const SCORE = { blork: 10, floater: 15, wobbler: 25, gurg: 30, sprocket: 200, boss: 500 };
+const SCORE = { blork: 10, floater: 15, wobbler: 25, gurg: 30, popper: 20, blinker: 30, medic: 40, bulwark: 45, sprocket: 200, boss: 500 };
 const BEST_KEY = 'webalo.survival.best';
 function loadBest() { try { return JSON.parse(localStorage.getItem(BEST_KEY)) || { wave: 0, score: 0 }; } catch (e) { return { wave: 0, score: 0 }; } }
 function saveBest(b) { try { localStorage.setItem(BEST_KEY, JSON.stringify(b)); } catch (e) { /* ignore */ } }
@@ -106,10 +106,14 @@ export class Survival {
   // mini-boss every 5th wave. Counts are capped to keep the arena (and frame
   // rate) sane.
   _composition(n) {
-    const out = [['blork', Math.min(10, 2 + n)]];
-    if (n >= 2) out.push(['floater', Math.min(5, Math.floor(n / 2))]);
-    if (n >= 3) out.push(['gurg', Math.min(3, Math.floor((n - 1) / 3))]);
-    if (n >= 4) out.push(['wobbler', Math.min(3, Math.floor((n - 2) / 4))]);
+    const out = [['blork', Math.min(9, 2 + n)]];
+    if (n >= 2) out.push(['floater', Math.min(4, Math.floor(n / 2))]);
+    if (n >= 3) out.push(['popper', Math.min(3, Math.floor((n - 1) / 2))]);
+    if (n >= 3) out.push(['gurg', Math.min(2, Math.floor((n - 1) / 3))]);
+    if (n >= 4) out.push(['bulwark', Math.min(2, Math.floor((n - 2) / 3))]);
+    if (n >= 5) out.push(['blinker', Math.min(3, Math.floor((n - 3) / 2))]);
+    if (n >= 4) out.push(['wobbler', Math.min(2, Math.floor((n - 2) / 4))]);
+    if (n >= 6 && n % 2 === 0) out.push(['medic', 1]);   // a healer shows up to be prioritized
     if (n % 5 === 0) out.push(['sprocket', 1]);
     return out;
   }

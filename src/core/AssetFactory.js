@@ -107,6 +107,10 @@ export const AssetFactory = {
       floater: { color: 0xe8d24a, size: 0.4,  eye: 0.22, antenna: false, feet: false, hover: true },
       boss:    { color: 0xd83a6a, size: 1.8,  eye: 0.3,  antenna: true,  feet: true,  bulky: true },
       sprocket:{ color: 0x2ec4b6, size: 1.3,  eye: 0.2,  antenna: false, feet: true,  tall: true },
+      popper:  { color: 0xff5a3d, size: 0.5,  eye: 0.14, antenna: false, feet: true,  core: true },
+      medic:   { color: 0x7cfc9a, size: 0.5,  eye: 0.16, antenna: true,  feet: false, hover: true, cross: true },
+      bulwark: { color: 0x9aa7b3, size: 0.95, eye: 0.16, antenna: false, feet: true,  bulky: true, plate: true },
+      blinker: { color: 0xc77dff, size: 0.44, eye: 0.2,  antenna: true,  feet: false, hover: true, wisp: true },
     }[type] || { color: 0xff8a3d, size: 0.5, eye: 0.12, antenna: true, feet: true };
 
     const s = cfg.size;
@@ -181,6 +185,30 @@ export const AssetFactory = {
         tooth.position.set(Math.cos(ang) * s * 1.12, body.position.y - s * 0.35, Math.sin(ang) * s * 1.12);
         g.add(tooth);
       }
+    }
+
+    if (cfg.core) {            // popper: a volatile glowing core that flashes on its fuse
+      const core = new THREE.Mesh(new THREE.SphereGeometry(s * 0.55, 12, 10),
+        mat(0xffd24a, { emissive: 0xffaa33, emissiveIntensity: 0.8, transparent: true, opacity: 0.85 }));
+      core.position.y = body.position.y; g.add(core); g.userData.popCore = core;
+    }
+    if (cfg.cross) {           // medic: a glowing health cross
+      const cm = mat(0xffffff, { emissive: 0xbfffd0, emissiveIntensity: 1.0 });
+      const v = new THREE.Mesh(new THREE.BoxGeometry(s * 0.16, s * 0.5, s * 0.06), cm);
+      const h = new THREE.Mesh(new THREE.BoxGeometry(s * 0.5, s * 0.16, s * 0.06), cm);
+      v.position.set(0, body.position.y, s * 0.9); h.position.set(0, body.position.y, s * 0.9);
+      g.add(v, h);
+    }
+    if (cfg.plate) {           // bulwark: a frontal shield plate (local +z = the unit's facing)
+      const plate = new THREE.Mesh(new THREE.BoxGeometry(s * 1.9, s * 1.7, s * 0.18), mat(0x6f7b87, { metal: 0.5, rough: 0.4 }));
+      plate.position.set(0, body.position.y, s * 1.05); g.add(plate); g.userData.plate = plate;
+      const rim = new THREE.Mesh(new THREE.TorusGeometry(s * 0.82, s * 0.08, 6, 16), mat(cfg.color, { emissive: cfg.color, emissiveIntensity: 0.4 }));
+      rim.position.set(0, body.position.y, s * 1.16); g.add(rim);
+    }
+    if (cfg.wisp) {            // blinker: a faint unstable aura
+      const halo = new THREE.Mesh(new THREE.SphereGeometry(s * 1.2, 12, 10),
+        mat(cfg.color, { transparent: true, opacity: 0.16, emissive: cfg.color, emissiveIntensity: 0.6 }));
+      halo.position.y = body.position.y; g.add(halo);
     }
 
     // Shielded units carry a personal shield bubble (tinted to their colour)

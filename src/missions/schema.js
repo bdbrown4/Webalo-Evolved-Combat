@@ -31,6 +31,11 @@ export const ENEMY_META = {
   wobbler: { name: 'Sprocket Acolyte', hp: 70, speed: 3.4, dmg: 12, range: 22, kind: 'ranged', shield: 60, scoreColor: 0x35c98f },
   floater: { name: 'Bobbins',    hp: 26,  speed: 3.0, dmg: 10, range: 26,  kind: 'ranged', hover: true, scoreColor: 0xe8d24a },
   sprocket:{ name: 'Quivermaster Sprocket', hp: 340, speed: 2.8, dmg: 16, range: 24, kind: 'sprocket', shield: 160, miniboss: true, scoreColor: 0x2ec4b6 },
+  // Tactical archetypes (Survival waves; can be dropped into campaign segments too)
+  popper:  { name: 'Goober Popper', hp: 24,  speed: 6.6, dmg: 34, range: 2.6, kind: 'popper',  scoreColor: 0xff5a3d },
+  medic:   { name: 'Mendbot',       hp: 64,  speed: 3.8, dmg: 0,  range: 0,   kind: 'medic',   shield: 24, hover: true, scoreColor: 0x7cfc9a },
+  bulwark: { name: 'Bulwark Blob',  hp: 130, speed: 2.7, dmg: 16, range: 2.3, kind: 'bulwark', scoreColor: 0x9aa7b3 },
+  blinker: { name: 'Blip',          hp: 42,  speed: 3.4, dmg: 11, range: 24,  kind: 'blinker', hover: true, scoreColor: 0xc77dff },
   boss:    { name: 'Supreme Jiggler Pomplemoose', hp: 1400, speed: 1.6, dmg: 26, range: 30, kind: 'boss', shield: 0, scoreColor: 0xd83a6a },
 };
 

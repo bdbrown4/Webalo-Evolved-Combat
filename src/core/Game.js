@@ -76,6 +76,7 @@ export class Game {
     this.physics = new Physics();
     this.enemies = [];
     this.projectiles = [];
+    this.players = [];          // all players in the world; [local] solo, [local, remote…] in co-op
     this.fx = [];
     this.state = 'menu';
     this.shakeAmt = 0;
@@ -196,6 +197,9 @@ export class Game {
     this._runPerks = [];                     // Survival is its own challenge — no campaign perks
     this._beginMission(SURVIVAL_MISSION);
     this.level.freeplay = true;
+    // dev rig: ?coopdummy=1 drops a second, AI-wandering player so the co-op
+    // targeting/avatar/damage paths can be exercised before networking exists
+    if (this._coopDummy()) { const s = this.player.pos.clone(); s.x += 4; const d = this.addRemotePlayer(s, { color: 0xff8a3d }); d._dummy = true; }
     this.survival = new Survival(this.root, this, () => this.quitToMenu());
     this.survival.start();
   }
@@ -275,6 +279,7 @@ export class Game {
     if (cp && cp.player) this.player.applySnapshot(cp.player);
     this.player.weapons.forEach((w) => { w.reloadMult = this.player.reloadMult; }); // mirror onto (possibly rebuilt) weapons
     this._setViewModel(this.player.weapon ? this.player.weapon.key : null);
+    this.players = [this.player];                          // co-op adds remote players on top of this
 
     this.enemies.length = 0; this.projectiles.length = 0; this.fx.length = 0;
     this.audio.setTrack(mission.music);
@@ -299,6 +304,8 @@ export class Game {
     if (this.survival) { this.survival.destroy(); this.survival = null; }
     if (this.vehicle) { this.scene.remove(this.vehicle.mesh); this.vehicle = null; }
     if (this.player) this.player.driving = false;
+    for (const p of this.players) { if (p !== this.player && p._avatar) this.scene.remove(p._avatar); }
+    this.players = [];
     this._clearNadeModel();
     this._clearMeleeModel();
     if (this._viewModel) this._viewModel.visible = true;
@@ -317,7 +324,11 @@ export class Game {
         physics: this.physics,
         audio: this.audio,
         get player() { return this._g.player; },
+        get players() { return this._g.players; },
         get enemies() { return this._g.enemies; },
+        // The living player nearest a world point — how enemies/projectiles pick a
+        // co-op target. Solo, this is always the one player (or null if downed).
+        nearestPlayer: (pos) => { let best = null, bd = Infinity; for (const pl of this.players) { if (!pl || pl.dead) continue; const d = pl.pos.distanceToSquared(pos); if (d < bd) { bd = d; best = pl; } } return best; },
         _g: this,
         spawnEnemy: (type, pos) => { const e = new Enemy(type, pos); this._scaleEnemy(e); this.enemies.push(e); this.scene.add(e.mesh); return e; },
         requestSpawn: (type, n, near) => { const cap = 28; for (let i = 0; i < n && this.enemies.filter((x) => !x.dead).length < cap; i++) { const p = near.clone().add(new THREE.Vector3((Math.random() - 0.5) * 6, 0, (Math.random() - 0.5) * 6)); const e = new Enemy(type, p); this._scaleEnemy(e); this.enemies.push(e); this.scene.add(e.mesh); if (this.level) { const r = this.level.segments[this.level.activeIndex]; if (r) r.enemies.push(e); } } },
@@ -401,6 +412,70 @@ export class Game {
   _scaleEnemy(e) {
     const h = this._diff ? this._diff.enemyHealth : 1;
     e.hp *= h; e.maxHp *= h; e.shield *= h; e.maxShield *= h;
+  }
+
+  // ---------- co-op: remote players ----------
+  _coopDummy() { try { return new URLSearchParams(location.search).get('coopdummy') === '1'; } catch (e) { return false; } }
+
+  // A second (or third…) player that this client does not control directly: on the
+  // host it's the guest driven by networked input; the dev dummy wanders on its own.
+  // It's a full Player (so enemies/projectiles damage it through the same paths) but
+  // owns a throwaway camera so it never touches our real view, and carries a visible
+  // "buddy" avatar (the local player stays first-person/invisible).
+  addRemotePlayer(spawn, opts = {}) {
+    const cam = new THREE.PerspectiveCamera(70, 1, 0.05, 1000);
+    const p = new Player(cam, spawn);
+    p.remote = true;
+    p.netId = opts.id || 'guest';
+    p.dmgTakenMult = this._diff ? this._diff.dmgTaken : 1;
+    (opts.weapons || ['rifle', 'pistol']).forEach((w) => p.giveWeapon(w));
+    p._avatar = this._makeBuddyAvatar(opts.color);
+    p._avatar.position.copy(p.pos);
+    this.scene.add(p._avatar);
+    this.players.push(p);
+    return p;
+  }
+
+  _makeBuddyAvatar(color) {
+    const g = new THREE.Group();
+    const armor = new THREE.MeshStandardMaterial({ color: color || 0x3d7bd6, metalness: 0.3, roughness: 0.6 });
+    const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.34, 0.7, 4, 10), armor);
+    torso.position.y = 1.0; torso.castShadow = true; g.add(torso);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.26, 16, 12), armor);
+    head.position.y = 1.62; head.castShadow = true; g.add(head);
+    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.12, 0.09),
+      new THREE.MeshStandardMaterial({ color: 0x8ffcff, emissive: 0x2bd6ff, emissiveIntensity: 0.8, metalness: 0.4, roughness: 0.3 }));
+    visor.position.set(0, 1.64, 0.22); g.add(visor);
+    // a stubby rifle nub pointing +Z (forward at yaw 0) so the buddy's facing reads
+    const gun = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 0.5),
+      new THREE.MeshStandardMaterial({ color: 0x2a2f38, metalness: 0.6, roughness: 0.4 }));
+    gun.position.set(0.26, 1.0, 0.34); g.add(gun);
+    return g;
+  }
+
+  // Advance a non-local player. The dev dummy ambles in a slow circle; the networked
+  // guest (Slice 3) will instead be driven from forwarded input. Either way we keep
+  // its shields/weapons ticking and sync its avatar to its transform.
+  _updateRemotePlayer(rp, dt, ctx) {
+    if (!rp.dead && rp._dummy) {
+      rp._wanderT = (rp._wanderT || 0) + dt;
+      rp.yaw = rp._wanderT * 0.6;
+      const fwd = new THREE.Vector3(Math.sin(rp.yaw), 0, Math.cos(rp.yaw));
+      rp.vel.x = fwd.x * 2.5; rp.vel.z = fwd.z * 2.5;
+      rp.vel.y += ctx.physics.gravity * dt;
+      const res = ctx.physics.moveAndCollide(rp.pos, rp.vel, dt, rp.radius, rp.curHeight);
+      if (res.grounded && rp.vel.y < 0) rp.vel.y = 0;
+      rp._regen(dt, ctx);
+      if (rp.weapon) rp.weapon.update(dt);
+    }
+    this._syncAvatar(rp);
+  }
+
+  _syncAvatar(rp) {
+    if (!rp._avatar) return;
+    rp._avatar.visible = !rp.dead;
+    rp._avatar.position.set(rp.pos.x, rp.pos.y, rp.pos.z);
+    rp._avatar.rotation.y = rp.yaw;
   }
 
   _saveCheckpoint(segment) {
@@ -729,6 +804,8 @@ export class Game {
     } else if (this.isTouch) {
       this._touchAssist(dt);                       // soft aim magnetism off the centred reticle
     }
+    // advance any co-op/dummy players sharing the world
+    for (const rp of this.players) { if (rp !== this.player) this._updateRemotePlayer(rp, dt, ctx); }
     // touch QoL: auto-reload a dry magazine
     if (this.isTouch && this.player.weapon && this.player.weapon.needsReload() && this.player.weapon.reloading <= 0) {
       if (this.player.weapon.startReload()) this.audio.sfx('reload');

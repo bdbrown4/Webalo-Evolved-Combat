@@ -111,7 +111,11 @@ export class Enemy {
     this.wobble += dt * 6;
     if (this.dead) return this._updateDeath(dt);
 
-    const player = ctx.player;
+    // co-op: lock onto the nearest LIVING player (solo = the one player). A downed
+    // player is ignored; if everyone's down there's nothing to chase, so coast.
+    const player = (ctx.nearestPlayer && ctx.nearestPlayer(this.pos)) || (ctx.player && !ctx.player.dead ? ctx.player : null);
+    if (!player) { this._integrate(dt, ctx); this._animate(dt); return; }
+    this.target = player;
     const toPlayer = new THREE.Vector3().subVectors(player.pos, this.pos);
     const dist = toPlayer.length();
     const flat = toPlayer.clone().setY(0).normalize();
@@ -152,7 +156,7 @@ export class Enemy {
     this.attackCd -= dt;
     if (dist < this.meta.range && this.attackCd <= 0) {
       this.attackCd = 1.1;
-      ctx.player.takeDamage(this.meta.dmg, this.pos);
+      this.target.takeDamage(this.meta.dmg, this.pos);
     }
   }
 
@@ -162,7 +166,7 @@ export class Enemy {
       this.chargeT -= dt;
       this.vel.x = this._chargeDir.x * this.speed * 3.2;
       this.vel.z = this._chargeDir.z * this.speed * 3.2;
-      if (dist < this.meta.range) { this.attackCd -= dt; if (this.attackCd <= 0) { this.attackCd = 1.4; ctx.player.takeDamage(this.meta.dmg, this.pos); } }
+      if (dist < this.meta.range) { this.attackCd -= dt; if (this.attackCd <= 0) { this.attackCd = 1.4; this.target.takeDamage(this.meta.dmg, this.pos); } }
     } else {
       this.state = 'chase';
       this.attackCd -= dt;
@@ -181,10 +185,10 @@ export class Enemy {
     if (this.hover) this.pos.y = 2.2 + Math.sin(this.wobble * 0.5) * 0.4;
 
     this.attackCd -= dt;
-    if (this.attackCd <= 0 && dist < this.meta.range && ctx.physics.hasLineOfSight(this.aimPoint(), ctx.player.headPoint())) {
+    if (this.attackCd <= 0 && dist < this.meta.range && ctx.physics.hasLineOfSight(this.aimPoint(), this.target.headPoint())) {
       this.attackCd = this.type === 'wobbler' ? 1.8 : 1.3;
       const origin = this.aimPoint();
-      const dir = new THREE.Vector3().subVectors(ctx.player.headPoint(), origin).normalize();
+      const dir = new THREE.Vector3().subVectors(this.target.headPoint(), origin).normalize();
       // lead/arc: lob slightly upward
       const speed = 24;
       const vel = dir.multiplyScalar(speed); vel.y += 2.5;
@@ -206,7 +210,7 @@ export class Enemy {
     if (this.charging > 0) {                 // committed lunge (dodge by sidestep)
       this.charging -= dt;
       this.vel.x = this._chargeDir.x * this.speed * 5.5; this.vel.z = this._chargeDir.z * this.speed * 5.5;
-      if (dist < 4) { ctx.player.takeDamage(this.meta.dmg, this.pos); ctx.shake && ctx.shake(0.3); }
+      if (dist < 4) { this.target.takeDamage(this.meta.dmg, this.pos); ctx.shake && ctx.shake(0.3); }
       return;
     }
     if (this.spiralT > 0) {                  // rotating spray (dodge by circling)
@@ -257,13 +261,13 @@ export class Enemy {
     if (a === 'fan') {
       const n = this.bossPhase >= 2 ? 3 : 2;
       for (let i = -n; i <= n; i++) {
-        const dir = new THREE.Vector3().subVectors(ctx.player.headPoint(), this.aimPoint()).normalize();
+        const dir = new THREE.Vector3().subVectors(this.target.headPoint(), this.aimPoint()).normalize();
         dir.applyAxisAngle(new THREE.Vector3(0, 1, 0), i * 0.13);
         ctx.spawnProjectile && ctx.spawnProjectile({ type: 'bossbolt', owner: 'enemy', pos: this.aimPoint(), vel: dir.multiplyScalar(32), damage: 14, splash: 2, life: 4 });
       }
       ctx.audio && ctx.audio.sfx('goocaster');
     } else if (a === 'slam') {
-      if (dist < 7.5) ctx.player.takeDamage(this.meta.dmg * 1.3, this.pos);  // stay out of the red ring
+      if (dist < 7.5) this.target.takeDamage(this.meta.dmg * 1.3, this.pos);  // stay out of the red ring
       ctx.spawnExplosion && ctx.spawnExplosion(this.pos.clone().setY(0.5), 7);
       ctx.shake && ctx.shake(0.7);
       ctx.audio && ctx.audio.sfx('explosion');
@@ -301,7 +305,7 @@ export class Enemy {
         // quill fan
         const n = this.bossPhase === 2 ? 3 : 2;
         for (let i = -n; i <= n; i++) {
-          const dir = new THREE.Vector3().subVectors(ctx.player.headPoint(), origin).normalize();
+          const dir = new THREE.Vector3().subVectors(this.target.headPoint(), origin).normalize();
           dir.applyAxisAngle(new THREE.Vector3(0, 1, 0), i * 0.14);
           ctx.spawnProjectile && ctx.spawnProjectile({ type: 'shard', owner: 'enemy', pos: origin, vel: dir.multiplyScalar(36), damage: 8, life: 4 });
         }
@@ -310,7 +314,7 @@ export class Enemy {
         ctx.requestSpawn('floater', this.bossPhase === 2 ? 3 : 2, this.pos);
         ctx.audio && ctx.audio.sfx('wobbler');
       } else {
-        const dir = new THREE.Vector3().subVectors(ctx.player.headPoint(), origin).normalize();
+        const dir = new THREE.Vector3().subVectors(this.target.headPoint(), origin).normalize();
         const vel = dir.multiplyScalar(26); vel.y += 2.5;
         ctx.spawnProjectile && ctx.spawnProjectile({ type: 'goo', owner: 'enemy', pos: origin, vel, damage: this.meta.dmg, gravity: -8, splash: 1.5, life: 4 });
         ctx.audio && ctx.audio.sfx('goocaster');
@@ -336,11 +340,11 @@ export class Enemy {
   _detonate(ctx) {
     const R = 4.4;
     ctx.spawnExplosion && ctx.spawnExplosion(this.pos.clone().setY(1.0), R);
-    if (ctx.player.pos.distanceTo(this.pos) < R) ctx.player.takeDamage(this.meta.dmg, this.pos);
+    if (this.target.pos.distanceTo(this.pos) < R) this.target.takeDamage(this.meta.dmg, this.pos);
     ctx.shake && ctx.shake(0.5);
     ctx.audio && ctx.audio.sfx('explosion');
     this._noSiphon = true;          // it blew itself up on you — no heal reward
-    this._die(ctx.player.pos);
+    this._die(this.target.pos);
   }
 
   // Mendbot — a floating support drone. No attack; it hangs back and pulses heals
@@ -383,7 +387,7 @@ export class Enemy {
     const want = dist > this.meta.range * 0.85 ? this.speed : 0;
     this.vel.x = flat.x * want; this.vel.z = flat.z * want;
     this.attackCd -= dt;
-    if (dist < this.meta.range && this.attackCd <= 0) { this.attackCd = 1.3; ctx.player.takeDamage(this.meta.dmg, this.pos); }
+    if (dist < this.meta.range && this.attackCd <= 0) { this.attackCd = 1.3; this.target.takeDamage(this.meta.dmg, this.pos); }
   }
 
   // Blip — a ranged harasser that teleports every couple of seconds to throw off

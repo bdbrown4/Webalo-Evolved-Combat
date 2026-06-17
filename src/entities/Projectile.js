@@ -131,10 +131,13 @@ export class Projectile {
           return this.splash ? this.explode(ctx) : this._impact(ctx);
         }
       }
-    } else if (this.owner === 'enemy' && ctx.player) {
-      if (this.pos.distanceTo(ctx.player.headPoint()) < 1.0) {
-        ctx.player.takeDamage(this.damage, this.pos);
-        return this.splash ? this.explode(ctx) : this._impact(ctx);
+    } else if (this.owner === 'enemy' && ctx.players) {
+      for (const pl of ctx.players) {
+        if (!pl || pl.dead) continue;
+        if (this.pos.distanceTo(pl.headPoint()) < 1.0) {
+          pl.takeDamage(this.damage, this.pos);
+          return this.splash ? this.explode(ctx) : this._impact(ctx);
+        }
       }
     }
   }
@@ -175,14 +178,21 @@ export class Projectile {
         const d = e.aimPoint().distanceTo(this.pos);
         if (d < r) e.takeDamage(this.damage * (1 - d / r) + this.damage * 0.4, { shieldMult: this.shieldMult, source: this.pos });
       }
-      // your own grenades are not your friends (cooked too long / bounced back)
-      if (this.type === 'grenade' && ctx.player) {
-        const d = ctx.player.headPoint().distanceTo(this.pos);
-        if (d < r) ctx.player.takeDamage(this.damage * (1 - d / r) * 0.5, this.pos);
+      // your own grenades are not your friends (cooked too long / bounced back) —
+      // and in co-op they're not your buddy's friends either
+      if (this.type === 'grenade' && ctx.players) {
+        for (const pl of ctx.players) {
+          if (!pl || pl.dead) continue;
+          const d = pl.headPoint().distanceTo(this.pos);
+          if (d < r) pl.takeDamage(this.damage * (1 - d / r) * 0.5, this.pos);
+        }
       }
-    } else if (this.owner === 'enemy' && ctx.player) {
-      const d = ctx.player.headPoint().distanceTo(this.pos);
-      if (d < r) ctx.player.takeDamage(this.damage * (1 - d / r), this.pos);
+    } else if (this.owner === 'enemy' && ctx.players) {
+      for (const pl of ctx.players) {
+        if (!pl || pl.dead) continue;
+        const d = pl.headPoint().distanceTo(this.pos);
+        if (d < r) pl.takeDamage(this.damage * (1 - d / r), this.pos);
+      }
     }
   }
 }

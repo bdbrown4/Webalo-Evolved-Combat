@@ -24,6 +24,26 @@ export const NET_INPUT_DT = 1 / NET_INPUT_HZ;
 const r2 = (n) => Math.round(n * 100) / 100;
 const r3 = (n) => Math.round(n * 1000) / 1000;
 
+// Snapshot interpolation: render entities ~80ms in the past, smoothly between the
+// two buffered samples bracketing that time, so 20Hz updates read as fluid motion.
+const INTERP_DELAY = 0.08;
+const BUF_MAX = 6;
+function pushSample(buf, t, x, y, z, f) { buf.push({ t, x, y, z, f }); if (buf.length > BUF_MAX) buf.shift(); }
+function lerpAngle(a, b, t) { let d = b - a; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2; return a + d * t; }
+function sampleAt(buf, rt) {
+  const n = buf.length;
+  if (n === 1) return buf[0];
+  if (rt >= buf[n - 1].t) return buf[n - 1];                 // starved → hold the newest
+  for (let i = n - 1; i > 0; i--) {
+    if (buf[i - 1].t <= rt) {
+      const a = buf[i - 1], b = buf[i], span = b.t - a.t;
+      const k = span > 1e-4 ? (rt - a.t) / span : 1;
+      return { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, z: a.z + (b.z - a.z) * k, f: lerpAngle(a.f, b.f, k) };
+    }
+  }
+  return buf[0];                                             // older than the buffer → clamp oldest
+}
+
 // Run `fn` with Math.random replaced by a seeded LCG, so the host and guest
 // build byte-identical arenas from the same seed. Restores the real RNG after.
 export function withSeededRandom(seed, fn) {
@@ -129,9 +149,10 @@ export function applySnapshot(game, snap) {
       const mesh = AssetFactory.enemy(a[1]);
       mesh.position.set(a[2], a[3], a[4]);
       game.scene.add(mesh);
-      g = { mesh, dead: 0 }; game._ghosts.set(id, g);
+      g = { mesh, buf: [] }; game._ghosts.set(id, g);
     }
-    g.tx = a[2]; g.ty = a[3]; g.tz = a[4]; g.tf = a[5]; g.dead = a[6]; g.deathT = a[7];
+    g.dead = a[6]; g.deathT = a[7];
+    pushSample(g.buf, game._netClock || 0, a[2], a[3], a[4], a[5]);
   }
   for (const [id, g] of game._ghosts) { if (!seen.has(id)) { game.scene.remove(g.mesh); disposeMesh(g.mesh); game._ghosts.delete(id); } }
 
@@ -142,8 +163,8 @@ export function applySnapshot(game, snap) {
     const id = a[0];
     pseen.add(id);
     let pg = game._projGhosts.get(id);
-    if (!pg) { const mesh = AssetFactory.projectileMesh(a[1]); mesh.position.set(a[2], a[3], a[4]); game.scene.add(mesh); pg = { mesh }; game._projGhosts.set(id, pg); }
-    pg.tx = a[2]; pg.ty = a[3]; pg.tz = a[4];
+    if (!pg) { const mesh = AssetFactory.projectileMesh(a[1]); mesh.position.set(a[2], a[3], a[4]); game.scene.add(mesh); pg = { mesh, buf: [] }; game._projGhosts.set(id, pg); }
+    pushSample(pg.buf, game._netClock || 0, a[2], a[3], a[4], 0);
   }
   for (const [id, pg] of game._projGhosts) { if (!pseen.has(id)) { game.scene.remove(pg.mesh); disposeMesh(pg.mesh); game._projGhosts.delete(id); } }
 
@@ -151,10 +172,11 @@ export function applySnapshot(game, snap) {
   if (snap.hp) {
     const h = snap.hp;
     if (game._hostAvatar) {
-      game._hostAvatar._tx = h[0]; game._hostAvatar._ty = h[1]; game._hostAvatar._tz = h[2]; game._hostAvatar._tyaw = h[3];
+      if (!game._hostAvatar._buf) game._hostAvatar._buf = [];
+      pushSample(game._hostAvatar._buf, game._netClock || 0, h[0], h[1], h[2], h[3]);
       game._hostAvatar.visible = h[6] !== 2;       // hidden once truly dead
     }
-    game._hostState = { st: h[6], bleedT: h[7], reviveProg: h[8] };
+    game._hostState = { st: h[6], bleedT: h[7], reviveProg: h[8], health: h[4] };
   }
 
   // authoritative state for HUD + our own down/dead status (drives the guest freeze + UI)
@@ -170,26 +192,16 @@ export function applySnapshot(game, snap) {
 
 // Smoothly chase the latest snapshot targets — runs every guest frame.
 export function interpolateGhosts(game, dt) {
-  const k = Math.min(1, dt * 14);
+  const rt = (game._netClock || 0) - INTERP_DELAY;
   for (const [, g] of game._ghosts) {
-    g.mesh.position.x += (g.tx - g.mesh.position.x) * k;
-    g.mesh.position.y += (g.ty - g.mesh.position.y) * k;
-    g.mesh.position.z += (g.tz - g.mesh.position.z) * k;
-    g.mesh.rotation.y = g.tf;
+    if (g.buf && g.buf.length) { const s = sampleAt(g.buf, rt); g.mesh.position.set(s.x, s.y, s.z); g.mesh.rotation.y = s.f; }
     if (g.dead && g.deathT !== undefined) g.mesh.scale.setScalar(Math.max(0.01, g.deathT));
   }
   for (const [, pg] of game._projGhosts) {
-    pg.mesh.position.x += (pg.tx - pg.mesh.position.x) * k;
-    pg.mesh.position.y += (pg.ty - pg.mesh.position.y) * k;
-    pg.mesh.position.z += (pg.tz - pg.mesh.position.z) * k;
+    if (pg.buf && pg.buf.length) { const s = sampleAt(pg.buf, rt); pg.mesh.position.set(s.x, s.y, s.z); }
   }
   const a = game._hostAvatar;
-  if (a && a._tx !== undefined) {
-    a.position.x += (a._tx - a.position.x) * k;
-    a.position.y += (a._ty - a.position.y) * k;
-    a.position.z += (a._tz - a.position.z) * k;
-    a.rotation.y = a._tyaw;
-  }
+  if (a && a._buf && a._buf.length) { const s = sampleAt(a._buf, rt); a.position.set(s.x, s.y, s.z); a.rotation.y = s.f; }
 }
 
 function applyEvent(game, ev) {

@@ -545,6 +545,7 @@ export class Game {
 
   _beginCoopGuest(d) {
     // each 'start' (re)builds the world — initial join AND co-op retries arrive here
+    this._netClock = 0;
     this._levelSeed = d.seed;
     this.missionIndex = 0; this._resume = false; this._runPerks = [];
     this._beginMission(SURVIVAL_MISSION);
@@ -725,16 +726,18 @@ export class Game {
     if (this._coopHud) return;
     const wrap = document.createElement('div');
     wrap.className = 'coop-hud';
-    wrap.innerHTML = '<div class="coop-vignette"></div><div class="coop-downmsg"></div><div class="coop-alert"></div><div class="coop-marker"></div>';
+    wrap.innerHTML = '<div class="coop-vignette"></div><div class="coop-downmsg"></div><div class="coop-alert"></div><div class="coop-marker"></div><div class="coop-name"></div><div class="coop-arrow"></div>';
     this.root.appendChild(wrap);
     this._coopHud = wrap;
     this._coopVignette = wrap.querySelector('.coop-vignette');
     this._coopDownMsg = wrap.querySelector('.coop-downmsg');
     this._coopAlert = wrap.querySelector('.coop-alert');
     this._coopMarker = wrap.querySelector('.coop-marker');
+    this._coopName = wrap.querySelector('.coop-name');
+    this._coopArrow = wrap.querySelector('.coop-arrow');
   }
   _clearCoopHud() {
-    if (this._coopHud) { this._coopHud.remove(); this._coopHud = null; this._coopVignette = this._coopDownMsg = this._coopAlert = this._coopMarker = null; }
+    if (this._coopHud) { this._coopHud.remove(); this._coopHud = null; this._coopVignette = this._coopDownMsg = this._coopAlert = this._coopMarker = this._coopName = this._coopArrow = null; }
   }
 
   _updateCoopHud() {
@@ -742,16 +745,16 @@ export class Game {
     this._ensureCoopHud();
     // resolve my own + my partner's down state, whichever side we're on
     let meDowned = false, meDead = false, meBleed = 0, meRevive = 0;
-    let pPos = null, pDowned = false, pRevive = 0, pBleed = 0;
+    let pPos = null, pDowned = false, pRevive = 0, pBleed = 0, pDead = false, pHealthFrac = 1;
     if (this.coopRole === 'host') {
       const me = this.player, partner = this._guestPlayer;
       meDowned = me.downed; meDead = me.dead; meBleed = me.bleedT; meRevive = me.reviveProg;
-      if (partner) { pPos = partner.pos; pDowned = partner.downed; pRevive = partner.reviveProg; pBleed = partner.bleedT; }
+      if (partner) { pPos = partner.pos; pDowned = partner.downed; pRevive = partner.reviveProg; pBleed = partner.bleedT; pDead = partner.dead; pHealthFrac = partner.health / partner.healthMax; }
     } else {
       const gp = this._guestNetState || {};
       meDowned = !!gp.downed; meDead = !!gp.dead; meBleed = gp.bleedT || 0; meRevive = gp.reviveProg || 0;
       const hs = this._hostState;
-      if (hs && this._hostAvatar) { pPos = this._hostAvatar.position; pDowned = hs.st === 1; pRevive = hs.reviveProg || 0; pBleed = hs.bleedT || 0; }
+      if (hs && this._hostAvatar) { pPos = this._hostAvatar.position; pDowned = hs.st === 1; pRevive = hs.reviveProg || 0; pBleed = hs.bleedT || 0; pDead = hs.st === 2; pHealthFrac = (hs.health || 0) / 45; }
     }
     // MY down state: red vignette + centre message
     this._coopVignette.style.opacity = meDowned ? '1' : '0';
@@ -761,26 +764,49 @@ export class Game {
         ? `<div class="cd-big">BEING REVIVED…</div><div class="cd-bar"><i style="width:${Math.round(meRevive * 100)}%"></i></div>`
         : `<div class="cd-big">YOU'RE DOWN</div><div class="cd-sub">Hold on — a teammate can revive you</div><div class="cd-timer">${Math.ceil(meBleed)}s</div>`;
     } else { this._coopDownMsg.style.display = 'none'; }
-    // PARTNER down: top alert + a projected marker over them
-    if (pPos && pDowned && !meDowned && !meDead) {
+    // PARTNER: nameplate when up & on-screen; revive marker when downed & on-screen;
+    // an edge arrow toward a DOWNED partner who's off-screen; a top alert when downed.
+    const W = window.innerWidth, H = window.innerHeight;
+    let aAlert = false, aMarker = false, aName = false, aArrow = false;
+    if (pPos && !pDead && !meDowned && !meDead) {
       const key = this.isTouch ? 'USE' : codeLabel(this.settings.bindings.interact);
       const dist = this.player.pos.distanceTo(pPos);
       const inRange = dist <= COOP.REVIVE_RANGE;
-      this._coopAlert.style.display = 'block';
-      this._coopAlert.textContent = inRange ? `⚠ PARTNER DOWN — hold ${key} to revive` : `⚠ PARTNER DOWN — reach them! ${Math.ceil(pBleed)}s`;
-      const v = new THREE.Vector3(pPos.x, pPos.y + 1.6, pPos.z).project(this.camera);
-      if (v.z < 1) {
-        const x = (v.x * 0.5 + 0.5) * window.innerWidth, y = (-v.y * 0.5 + 0.5) * window.innerHeight;
-        this._coopMarker.style.display = 'block';
-        this._coopMarker.style.transform = `translate(-50%,-50%) translate(${x}px,${y}px)`;
-        this._coopMarker.innerHTML = inRange
-          ? `<div class="cm-pip rev">＋</div><div class="cm-lbl">${key} · ${Math.round(pRevive * 100)}%</div>`
-          : `<div class="cm-pip">▾</div><div class="cm-lbl">${Math.round(dist)}m · ${Math.ceil(pBleed)}s</div>`;
-      } else { this._coopMarker.style.display = 'none'; }
-    } else {
-      this._coopAlert.style.display = 'none';
-      this._coopMarker.style.display = 'none';
+      const v = new THREE.Vector3(pPos.x, pPos.y + 1.85, pPos.z).project(this.camera);
+      const behind = v.z > 1;
+      const onScreen = !behind && Math.abs(v.x) < 0.95 && Math.abs(v.y) < 0.95;
+      if (onScreen) {
+        const x = (v.x * 0.5 + 0.5) * W, y = (-v.y * 0.5 + 0.5) * H;
+        if (pDowned) {
+          aMarker = true;
+          this._coopMarker.style.transform = `translate(-50%,-50%) translate(${x}px,${y}px)`;
+          this._coopMarker.innerHTML = inRange
+            ? `<div class="cm-pip rev">＋</div><div class="cm-lbl">${key} · ${Math.round(pRevive * 100)}%</div>`
+            : `<div class="cm-pip">▾</div><div class="cm-lbl">${Math.round(dist)}m · ${Math.ceil(pBleed)}s</div>`;
+        } else {
+          aName = true;
+          this._coopName.style.transform = `translate(-50%,-100%) translate(${x}px,${y - 6}px)`;
+          this._coopName.innerHTML = `<span class="cn-tag">ALLY</span><span class="cn-bar"><i style="width:${Math.round(Math.max(0, Math.min(1, pHealthFrac)) * 100)}%"></i></span>`;
+        }
+      } else if (pDowned) {
+        aArrow = true;
+        let dx = v.x, dy = v.y; if (behind) { dx = -dx; dy = -dy; }
+        const ang = Math.atan2(dy, dx);
+        const ex = Math.cos(ang), ey = Math.sin(ang);
+        const sc = Math.min((W / 2 - 56) / Math.max(1e-3, Math.abs(ex)), (H / 2 - 56) / Math.max(1e-3, Math.abs(ey)));
+        const px = W / 2 + ex * sc, py = H / 2 - ey * sc;
+        this._coopArrow.style.transform = `translate(-50%,-50%) translate(${px}px,${py}px)`;
+        this._coopArrow.innerHTML = `<span class="ca-chev" style="transform:rotate(${-ang}rad)">➤</span><span class="ca-lbl">DOWN · ${Math.ceil(pBleed)}s</span>`;
+      }
+      if (pDowned) {
+        aAlert = true;
+        this._coopAlert.textContent = inRange ? `⚠ PARTNER DOWN — hold ${key} to revive` : `⚠ PARTNER DOWN — reach them! ${Math.ceil(pBleed)}s`;
+      }
     }
+    this._coopAlert.style.display = aAlert ? 'block' : 'none';
+    this._coopMarker.style.display = aMarker ? 'block' : 'none';
+    this._coopName.style.display = aName ? 'block' : 'none';
+    this._coopArrow.style.display = aArrow ? 'block' : 'none';
   }
 
   // MANUAL host (no relays): produce an offer, paste back the guest's answer.
@@ -849,6 +875,7 @@ export class Game {
   // and render the rest of the world (enemy/projectile ghosts, host avatar) from
   // the latest snapshot. No AI, no authoritative damage — the host owns all that.
   _updateGuest(dt) {
+    this._netClock = (this._netClock || 0) + dt;   // monotonic clock for snapshot interpolation
     if (this.isTouch && this.touch) { const fire = this.touch.fireHeld || this.touch.tapFire; this.touch.tapFire = false; this.input.setVirtual('fire', fire); }
     this.input.beginFrame();
     const ctx = this._ctx();

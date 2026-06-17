@@ -34,6 +34,12 @@ export class Enemy {
     this.deathT = 0;
     this.bossPhase = 1;
     this.bossActT = 2;
+    this.bossTell = 0;          // telegraph windup before a boss attack
+    this.bossAttack = null;
+    this.charging = 0;          // boss lunge timer
+    this.spiralT = 0;           // boss spiral-spray timer
+    this.spiralCd = 0;
+    this.spiralAngle = 0;
     this.mesh = AssetFactory.enemy(type);
     this.mesh.position.copy(this.pos);
     this.radius = type === 'boss' ? 3.0 : type === 'sprocket' ? 1.1 : (this.meta.kind === 'charger' ? 1.0 : 0.55);
@@ -98,6 +104,7 @@ export class Enemy {
     const away = source ? new THREE.Vector3().subVectors(this.pos, source).setY(0).normalize() : new THREE.Vector3(0, 0, 1);
     this.vel.copy(away.multiplyScalar(3)).setY(6);
     const bub = this.mesh.userData.shieldBubble; if (bub) bub.visible = false;
+    const b = this.mesh.userData.body; if (b && b.material.emissive) b.material.emissiveIntensity = 0; // clear a boss telegraph glow
   }
 
   update(dt, ctx) {
@@ -186,32 +193,88 @@ export class Enemy {
     }
   }
 
+  // Supreme Jiggler Pomplemoose — a telegraphed boss. He WINDS UP (freezes + a
+  // ground-ring tell + body pulse) before every attack, so each one is dodgeable,
+  // and the pattern set widens by phase: fan + slam + summon in P1, a rotating
+  // spiral added in P2, a committed charge in P3 — with a faster cadence throughout.
   _boss(dt, ctx, dist, flat) {
     this.state = 'boss';
-    // slowly track the player; cycle attacks
+    this.bossPhase = this.hp > this.maxHp * 0.66 ? 1 : this.hp > this.maxHp * 0.33 ? 2 : 3;
+    const body = this.mesh.userData.body;
+
+    // --- in-progress attacks run to completion ---
+    if (this.charging > 0) {                 // committed lunge (dodge by sidestep)
+      this.charging -= dt;
+      this.vel.x = this._chargeDir.x * this.speed * 5.5; this.vel.z = this._chargeDir.z * this.speed * 5.5;
+      if (dist < 4) { ctx.player.takeDamage(this.meta.dmg, this.pos); ctx.shake && ctx.shake(0.3); }
+      return;
+    }
+    if (this.spiralT > 0) {                  // rotating spray (dodge by circling)
+      this.spiralT -= dt; this.vel.set(0, 0, 0);
+      this.spiralCd -= dt;
+      if (this.spiralCd <= 0) {
+        this.spiralCd = 0.07;
+        const dir = new THREE.Vector3(Math.sin(this.spiralAngle), 0, Math.cos(this.spiralAngle));
+        ctx.spawnProjectile && ctx.spawnProjectile({ type: 'bossbolt', owner: 'enemy', pos: this.aimPoint(), vel: dir.multiplyScalar(26), damage: 12, splash: 1.5, life: 4 });
+        this.spiralAngle += 0.5;
+        ctx.audio && ctx.audio.sfx('goocaster');
+      }
+      return;
+    }
+
+    // --- telegraph windup: frozen, body pulsing red ---
+    if (this.bossTell > 0) {
+      this.bossTell -= dt; this.vel.set(0, 0, 0);
+      if (body && body.material.emissive) { body.material.emissive.setHex(0xff4040); body.material.emissiveIntensity = 0.4 + Math.abs(Math.sin(this.wobble * 7)) * 0.9; }
+      if (this.bossTell <= 0) {
+        if (body && body.material.emissive) body.material.emissiveIntensity = 0;
+        this._bossExecute(ctx, dist);
+      }
+      return;
+    }
+
+    // --- idle: track the player, then choose + telegraph the next attack ---
     this.vel.x = flat.x * this.speed; this.vel.z = flat.z * this.speed;
     this.bossActT -= dt;
-    this.bossPhase = this.hp > this.maxHp * 0.66 ? 1 : this.hp > this.maxHp * 0.33 ? 2 : 3;
     if (this.bossActT <= 0) {
-      this.bossActT = Math.max(1.2, 3.0 - this.bossPhase * 0.5);
-      const pick = Math.floor(this.wobble) % 3;
-      if (pick === 0) {
-        // goo barrage
-        for (let i = -2; i <= 2; i++) {
-          const dir = new THREE.Vector3().subVectors(ctx.player.headPoint(), this.aimPoint()).normalize();
-          dir.applyAxisAngle(new THREE.Vector3(0, 1, 0), i * 0.12);
-          ctx.spawnProjectile && ctx.spawnProjectile({ type: 'bossbolt', owner: 'enemy', pos: this.aimPoint(), vel: dir.multiplyScalar(30), damage: 14, splash: 2, life: 4 });
-        }
-        ctx.audio && ctx.audio.sfx('goocaster');
-      } else if (pick === 1 && ctx.requestSpawn) {
-        // spawn a couple of blork adds
-        ctx.requestSpawn('blork', 2, this.pos);
-        ctx.audio && ctx.audio.sfx('wobbler');
-      } else if (dist < 6) {
-        ctx.player.takeDamage(this.meta.dmg, this.pos);
-        ctx.shake && ctx.shake(0.5);
-        ctx.audio && ctx.audio.sfx('gurg');
+      this.bossActT = Math.max(1.3, 3.0 - this.bossPhase * 0.55);
+      const opts = ['fan', 'summon'];
+      if (dist < 9) opts.push('slam');
+      if (this.bossPhase >= 2) opts.push('spiral');
+      if (this.bossPhase >= 3 && dist > 7) opts.push('charge');
+      const a = opts[Math.floor(Math.random() * opts.length)];
+      this.bossAttack = a;
+      this.bossTell = 0.8;
+      if (a === 'charge') this._chargeDir = flat.clone();       // commits to your spot NOW — move!
+      const r = a === 'slam' ? 7 : 3.5;
+      ctx.onTelegraph && ctx.onTelegraph(this.pos.clone(), r, 0.8, a === 'slam' ? 0xff5a5a : 0xffb454);
+      ctx.audio && ctx.audio.sfx('gurg');
+    }
+  }
+
+  _bossExecute(ctx, dist) {
+    const a = this.bossAttack;
+    if (a === 'fan') {
+      const n = this.bossPhase >= 2 ? 3 : 2;
+      for (let i = -n; i <= n; i++) {
+        const dir = new THREE.Vector3().subVectors(ctx.player.headPoint(), this.aimPoint()).normalize();
+        dir.applyAxisAngle(new THREE.Vector3(0, 1, 0), i * 0.13);
+        ctx.spawnProjectile && ctx.spawnProjectile({ type: 'bossbolt', owner: 'enemy', pos: this.aimPoint(), vel: dir.multiplyScalar(32), damage: 14, splash: 2, life: 4 });
       }
+      ctx.audio && ctx.audio.sfx('goocaster');
+    } else if (a === 'slam') {
+      if (dist < 7.5) ctx.player.takeDamage(this.meta.dmg * 1.3, this.pos);  // stay out of the red ring
+      ctx.spawnExplosion && ctx.spawnExplosion(this.pos.clone().setY(0.5), 7);
+      ctx.shake && ctx.shake(0.7);
+      ctx.audio && ctx.audio.sfx('explosion');
+    } else if (a === 'spiral') {
+      this.spiralT = 1.1; this.spiralCd = 0; this.spiralAngle = Math.random() * Math.PI * 2;
+    } else if (a === 'charge') {
+      this.charging = 0.55;
+      ctx.audio && ctx.audio.sfx('gurg');
+    } else {
+      ctx.requestSpawn && ctx.requestSpawn('blork', this.bossPhase >= 2 ? 3 : 2, this.pos);
+      ctx.audio && ctx.audio.sfx('wobbler');
     }
   }
 

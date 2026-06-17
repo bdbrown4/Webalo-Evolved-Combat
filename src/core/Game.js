@@ -325,6 +325,7 @@ export class Game {
         spawnTracer: (a, b) => this._spawnTracer(a, b),
         spawnImpact: (p, kind) => this._spawnImpact(p, kind),
         spawnExplosion: (p, r) => this._spawnExplosion(p, r),
+        onTelegraph: (p, radius, duration, color) => this._spawnTelegraph(p, radius, duration, color),
         onMuzzleFlash: (def) => this._muzzle(def),
         onHitmark: () => this.hud.hitMark(),
         shake: (a) => { this.shakeAmt = Math.max(this.shakeAmt, a); },
@@ -517,6 +518,16 @@ export class Game {
     const m = new THREE.Mesh(new THREE.SphereGeometry(0.1, 6, 6), new THREE.MeshBasicMaterial({ color: kind === 'spark' ? 0xffd070 : 0x9cff9c }));
     m.position.copy(p); this.scene.add(m);
     this.fx.push({ mesh: m, life: 0.18, maxLife: 0.18, kind: 'impact' });
+  }
+  // A ground danger-ring that brightens as a boss attack winds up, so the player
+  // can read and dodge it. Always shown (it's gameplay-critical, not just flair).
+  _spawnTelegraph(p, radius, duration, color) {
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(Math.max(0.1, radius - 0.7), radius, 36),
+      new THREE.MeshBasicMaterial({ color: color || 0xff5a5a, transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false }));
+    ring.rotation.x = -Math.PI / 2; ring.position.set(p.x, 0.06, p.z);
+    this.scene.add(ring);
+    this.fx.push({ mesh: ring, life: duration, maxLife: duration, kind: 'telegraph' });
   }
   _spawnExplosion(p, r) {
     const m = new THREE.Mesh(new THREE.SphereGeometry(0.4, 12, 10), new THREE.MeshBasicMaterial({ color: 0xffa040, transparent: true, opacity: 0.85 }));
@@ -800,6 +811,7 @@ export class Game {
       const t = Math.max(0, f.life / f.maxLife);
       if (f.kind === 'tracer' || f.kind === 'impact' || f.kind === 'muzzle') { if (f.mesh.material) f.mesh.material.opacity = t; }
       if (f.kind === 'boom') { const s = 1 + (1 - t) * f.r; f.mesh.scale.setScalar(s); f.mesh.material.opacity = t * 0.85; if (f.light) f.light.intensity = 3 * t; }
+      if (f.kind === 'telegraph') { if (f.mesh.material) f.mesh.material.opacity = 0.2 + 0.6 * (1 - t); } // brighten toward the hit
       if (f.kind === 'goo') {
         f.vel.y -= 18 * dt;
         f.mesh.position.addScaledVector(f.vel, dt);
@@ -809,6 +821,9 @@ export class Game {
       if (f.life <= 0) {
         if (f.parent) f.parent.remove(f.mesh); else this.scene.remove(f.mesh);
         if (f.light) this.scene.remove(f.light);
+        // free the GPU resources — every fx kind makes its own geometry+material
+        if (f.mesh.geometry) f.mesh.geometry.dispose();
+        if (f.mesh.material) f.mesh.material.dispose();
         this.fx.splice(i, 1);
       }
     }

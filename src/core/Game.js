@@ -411,7 +411,15 @@ export class Game {
   _mountVehicle() {
     if (this.vehicle || !this.player) return;
     this.player.cancelCook(); // pocket any primed grenade — no cooking while driving
-    this.vehicle = new Vehicle(this.player.pos.clone(), this.camera);
+    // Drop the transport in the MIDDLE of the arena the player just cleared (the
+    // segment behind the escape track), not wherever they landed the killing blow —
+    // so it always has a clean run at the exit doorway.
+    const segs = this.level.segments, ai = this.level.activeIndex;
+    const arena = segs[ai - 1] || segs[ai];
+    const spawn = this.player.pos.clone();
+    if (arena) spawn.set(arena.cx, this.player.pos.y, arena.cz);
+    this.vehicle = new Vehicle(spawn, this.camera);
+    this.player.pos.copy(this.vehicle.pos); // snap the player into the seat (no 1-frame jump)
     this.scene.add(this.vehicle.mesh);
     this.player.driving = true;
     if (this._viewModel) this._viewModel.visible = false;

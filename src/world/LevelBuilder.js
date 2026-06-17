@@ -152,6 +152,9 @@ export class LevelBuilder {
         const prop = AssetFactory.prop(kind, new THREE.Color(mission.palette.accent).getHex());
         const px = (Math.random() - 0.5) * (sz.w - 4);
         const pz = cz + (Math.random() - 0.5) * (sz.d - 6);
+        // never block a doorway lane — a prop at the front/back gap can wall the
+        // player in, or stop the finale vehicle from driving out onto the track.
+        if (Math.abs(px) < DOOR_W / 2 + 2.5 && (pz > room.zBack - 5 || pz < room.zFront + 5)) continue;
         const py = kind === 'pillar' ? 2 : (kind === 'crate' ? 0.6 : 0.5);
         prop.position.set(px, py, pz);
         this.group.add(prop);
@@ -472,13 +475,18 @@ export class LevelBuilder {
       aliveCount++; aliveHp += (e.hp || 0) + (e.shield || 0);
       if (e.type === 'boss') continue;                 // the boss owns its (large) arena
       const m = (e.radius || 0.6) + 0.6;
-      const xMin = room.cx - hw + m, xMax = room.cx + hw - m;
-      const zMin = room.zFront + m, zMax = room.zBack - m;
       let moved = false;
-      if (e.pos.x < xMin) { e.pos.x = xMin; e.vel && (e.vel.x = 0); moved = true; }
-      else if (e.pos.x > xMax) { e.pos.x = xMax; e.vel && (e.vel.x = 0); moved = true; }
-      if (e.pos.z < zMin) { e.pos.z = zMin; e.vel && (e.vel.z = 0); moved = true; }
-      else if (e.pos.z > zMax) { e.pos.z = zMax; e.vel && (e.vel.z = 0); moved = true; }
+      // Only correct enemies still inside the active room. The FRONT doorway is
+      // open to the (cleared) prior room, so let an enemy chase the player back
+      // through it — clamping the front edge would strand it at the threshold and
+      // it could never reach a player who retreats. Side + back walls are solid.
+      if (e.pos.z >= room.zFront) {
+        const xMin = room.cx - hw + m, xMax = room.cx + hw - m;
+        if (e.pos.x < xMin) { e.pos.x = xMin; e.vel && (e.vel.x = 0); moved = true; }
+        else if (e.pos.x > xMax) { e.pos.x = xMax; e.vel && (e.vel.x = 0); moved = true; }
+        const zMax = room.zBack - m;                   // back is the locked door — keep them off it
+        if (e.pos.z > zMax) { e.pos.z = zMax; e.vel && (e.vel.z = 0); moved = true; }
+      }
       if (!e.hover && (e.pos.y < 0 || e.pos.y > 30)) { e.pos.y = 0.1; e.vel && e.vel.set(0, 0, 0); moved = true; }
       if (moved && e.mesh) e.mesh.position.copy(e.pos);
     }

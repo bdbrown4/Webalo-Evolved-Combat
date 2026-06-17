@@ -113,7 +113,7 @@ export class Enemy {
 
     // co-op: lock onto the nearest LIVING player (solo = the one player). A downed
     // player is ignored; if everyone's down there's nothing to chase, so coast.
-    const player = (ctx.nearestPlayer && ctx.nearestPlayer(this.pos)) || (ctx.player && !ctx.player.dead ? ctx.player : null);
+    const player = (ctx.nearestPlayer && ctx.nearestPlayer(this.pos)) || (ctx.player && !ctx.player.dead && !ctx.player.downed ? ctx.player : null);
     if (!player) { this._integrate(dt, ctx); this._animate(dt); return; }
     this.target = player;
     const toPlayer = new THREE.Vector3().subVectors(player.pos, this.pos);

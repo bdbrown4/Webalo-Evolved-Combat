@@ -136,7 +136,7 @@ export class Projectile {
       }
     } else if (this.owner === 'enemy' && ctx.players) {
       for (const pl of ctx.players) {
-        if (!pl || pl.dead) continue;
+        if (!pl || pl.dead || pl.downed) continue;
         if (this.pos.distanceTo(pl.headPoint()) < 1.0) {
           pl.takeDamage(this.damage, this.pos);
           return this.splash ? this.explode(ctx) : this._impact(ctx);
@@ -185,14 +185,14 @@ export class Projectile {
       // and in co-op they're not your buddy's friends either
       if (this.type === 'grenade' && ctx.players) {
         for (const pl of ctx.players) {
-          if (!pl || pl.dead) continue;
+          if (!pl || pl.dead || pl.downed) continue;
           const d = pl.headPoint().distanceTo(this.pos);
           if (d < r) pl.takeDamage(this.damage * (1 - d / r) * 0.5, this.pos);
         }
       }
     } else if (this.owner === 'enemy' && ctx.players) {
       for (const pl of ctx.players) {
-        if (!pl || pl.dead) continue;
+        if (!pl || pl.dead || pl.downed) continue;
         const d = pl.headPoint().distanceTo(this.pos);
         if (d < r) pl.takeDamage(this.damage * (1 - d / r), this.pos);
       }

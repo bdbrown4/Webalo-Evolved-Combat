@@ -12,6 +12,9 @@ const SHIELD_REGEN_DELAY = 3.0;
 const SHIELD_REGEN_RATE = 38;
 const FRAG_FUSE = 2.2; // starts burning the moment the pin is pulled (cookable)
 
+// Co-op down/revive tuning (only applies when a player is `downable`).
+export const COOP = { BLEED_TIME: 30, REVIVE_TIME: 3.5, REVIVE_RANGE: 2.6, REVIVE_HEALTH_FRAC: 0.5 };
+
 export class Player {
   constructor(camera, spawn) {
     this.camera = camera;
@@ -40,6 +43,11 @@ export class Player {
     this.health = this.healthMax;
     this.regenT = 0;
     this.dead = false;
+    // co-op: hitting 0 HP downs (incapacitates) instead of killing, when downable
+    this.downable = false;
+    this.downed = false;
+    this.bleedT = 0;            // seconds until bleed-out (host-driven)
+    this.reviveProg = 0;       // 0..1 revive progress (host-driven)
 
     this.weapons = [];
     this.current = 0;
@@ -120,7 +128,7 @@ export class Player {
   }
 
   takeDamage(amount, sourcePos) {
-    if (this.dead || amount <= 0) return;
+    if (this.dead || this.downed || amount <= 0) return; // downed players are out of the fight
     amount *= this.dmgTakenMult; // difficulty scaling
     this.regenT = 0;
     this.lastHitFlash = 0.3;
@@ -133,13 +141,31 @@ export class Player {
     }
     this._dmgSfx = wasShielded && this.shield > 0 ? 'shieldhit' : 'hurt';
     if (this._brokeShield) { this._dmgSfx = 'shieldbreak'; this._brokeShield = false; }
-    if (this.health <= 0) { this.health = 0; this.dead = true; }
+    if (this.health <= 0) {
+      this.health = 0;
+      if (this.downable) { this.downed = true; this.bleedT = COOP.BLEED_TIME; this.reviveProg = 0; this.vel.set(0, 0, 0); this.cancelCook(); }
+      else this.dead = true;
+    }
+  }
+
+  // Bring a downed player back into the fight (host-authoritative).
+  revive() {
+    this.downed = false; this.bleedT = 0; this.reviveProg = 0;
+    this.health = Math.round(this.healthMax * COOP.REVIVE_HEALTH_FRAC);
+    this.shield = 0; this.regenT = 0;
   }
 
   addHealth(amount) { this.health = Math.min(this.healthMax, this.health + amount * this.healMult); }
 
   update(dt, input, settings, ctx) {
     if (this.dead) return;
+    if (this.downed) {
+      // incapacitated: can still look around (spectate while you wait), no move/fire.
+      // bleed-out + revive are driven by the host sim, not here.
+      if (!this.remote) { this._look(input, settings); this._syncCamera(settings, dt); }
+      if (this.weapon) this.weapon.update(dt);
+      return;
+    }
     if (this.remote) {
       // Co-op host-side guest: its transform is applied from the network just
       // before this call. We run shields + combat so the HOST authoritatively
@@ -178,6 +204,7 @@ export class Player {
   // (mirrored back via snapshot), so no _combat/_regen here — the host runs them.
   updateGuest(dt, input, settings, ctx) {
     if (this.dead) { this._syncCamera(settings, dt); return; }
+    if (this.downed) { this._look(input, settings); this._syncCamera(settings, dt); return; } // frozen, can still look
     this._look(input, settings);
     this._move(dt, input, settings, ctx);
     if (this.weapon) this.weapon.update(dt); // keep the view-model cooldown honest

@@ -64,7 +64,9 @@ export class Survival {
   update(dt) {
     const g = this.game, p = g.player;
     if (this.state === 'over') return;
-    if (p && p.dead) { this._gameOver(); return; }
+    // Solo: death ends the run. Co-op: the host's down/all-down logic owns the
+    // game-over (a downed host can be revived; the run only ends when both fall).
+    if (p && p.dead && !g.coopRole) { this._gameOver(); return; }
 
     // tally kills as wave enemies die (covers force-killed stragglers too)
     for (const e of this._live) {
@@ -160,6 +162,13 @@ export class Survival {
     g.hud && g.hud.show(false);
     this.hudEl.classList.add('hidden');
     this._showOver();
+  }
+
+  // Fold the current run into the persisted best (used by co-op game-over too).
+  recordBest() {
+    if (this.wave > this.best.wave) this.best.wave = this.wave;
+    if (this.score > this.best.score) this.best.score = this.score;
+    saveBest(this.best);
   }
 
   _showOver() {

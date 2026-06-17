@@ -10,7 +10,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { Physics } from '../engine/Physics.js';
-import { Player } from '../entities/Player.js';
+import { Player, COOP } from '../entities/Player.js';
 import { Enemy } from '../entities/Enemy.js';
 import { Projectile } from '../entities/Projectile.js';
 import { Vehicle } from '../entities/Vehicle.js';
@@ -318,9 +318,11 @@ export class Game {
     for (const p of this.players) { if (p !== this.player && p._avatar) this.scene.remove(p._avatar); }
     this.players = [];
     clearGhosts(this);
+    this._clearCoopHud();
     if (this._hostAvatar) { this.scene.remove(this._hostAvatar); this._hostAvatar = null; }
     if (this._svHudEl) { this._svHudEl.remove(); this._svHudEl = null; }
     this._guestNetState = null; this._svNetState = null; this._guestPlayer = null; this._netEvents.length = 0;
+    this._hostState = null; this._coopOver = false;
     this._clearNadeModel();
     this._clearMeleeModel();
     if (this._viewModel) this._viewModel.visible = true;
@@ -343,7 +345,7 @@ export class Game {
         get enemies() { return this._g.enemies; },
         // The living player nearest a world point — how enemies/projectiles pick a
         // co-op target. Solo, this is always the one player (or null if downed).
-        nearestPlayer: (pos) => { let best = null, bd = Infinity; for (const pl of this.players) { if (!pl || pl.dead) continue; const d = pl.pos.distanceToSquared(pos); if (d < bd) { bd = d; best = pl; } } return best; },
+        nearestPlayer: (pos) => { let best = null, bd = Infinity; for (const pl of this.players) { if (!pl || pl.dead || pl.downed) continue; const d = pl.pos.distanceToSquared(pos); if (d < bd) { bd = d; best = pl; } } return best; },
         _g: this,
         spawnEnemy: (type, pos) => { const e = new Enemy(type, pos); this._scaleEnemy(e); this.enemies.push(e); this.scene.add(e.mesh); return e; },
         requestSpawn: (type, n, near) => { const cap = 28; for (let i = 0; i < n && this.enemies.filter((x) => !x.dead).length < cap; i++) { const p = near.clone().add(new THREE.Vector3((Math.random() - 0.5) * 6, 0, (Math.random() - 0.5) * 6)); const e = new Enemy(type, p); this._scaleEnemy(e); this.enemies.push(e); this.scene.add(e.mesh); if (this.level) { const r = this.level.segments[this.level.activeIndex]; if (r) r.enemies.push(e); } } },
@@ -520,6 +522,8 @@ export class Game {
     const guest = this.addRemotePlayer(gs, { color: 0xffb454, id: 'guest' });
     guest._netInput = new NetInputProxy();
     this._guestPlayer = guest;
+    this.player.downable = true; guest.downable = true;            // co-op: 0 HP downs, doesn't kill
+    this._coopOver = false;
     net.on('input', (pkt) => { if (this._guestPlayer && this._guestPlayer._netInput) this._guestPlayer._netInput.feed(pkt); });
     net.send('start', { seed: this._levelSeed, gs: { x: gs.x, y: gs.y, z: gs.z } });
     this.survival = new Survival(this.root, this, () => this.quitToMenu());
@@ -617,6 +621,132 @@ export class Game {
     this._coopReassure = this._coopFailTimer = this._coopLaunchTimer = null;
   }
 
+  // ---------- co-op: downs / revives (host-authoritative) ----------
+  _isReviving(r) {
+    if (r === this.player) return this.input.isDown('interact');
+    if (r._netInput) return r._netInput.isDown('interact');
+    return false;
+  }
+
+  _updateDownsAndRevives(dt, ctx) {
+    let anyUp = false;
+    for (const p of this.players) {
+      if (!p.dead && !p.downed) { anyUp = true; continue; }
+      if (!p.downed) continue;
+      p.bleedT -= dt;                                   // bleed out if no one reaches them
+      if (p.bleedT <= 0) { p.downed = false; p.dead = true; p.reviveProg = 0; continue; }
+      let reviving = false;                             // a standing teammate, in range, holding Interact
+      for (const r of this.players) {
+        if (r === p || r.dead || r.downed) continue;
+        if (r.pos.distanceTo(p.pos) <= COOP.REVIVE_RANGE && this._isReviving(r)) { reviving = true; break; }
+      }
+      if (reviving) {
+        p.reviveProg = Math.min(1, p.reviveProg + dt / COOP.REVIVE_TIME);
+        if (p.reviveProg >= 1) {
+          p.revive();
+          this.audio.sfx('shieldrecharge'); this._netPush('sfx', 'shieldrecharge');
+          this.hud.banner('REVIVED', 'Back in the fight!', 1.4); this._netPush('banner', 'REVIVED', 'Back in the fight!', 1.4);
+        }
+      } else {
+        p.reviveProg = Math.max(0, p.reviveProg - dt * 0.5);   // bleed the progress back off
+      }
+    }
+    if (!anyUp && !this._coopOver) this._coopAllDown();
+  }
+
+  _coopAllDown() {
+    if (this._coopOver) return;
+    this._coopOver = true;
+    const wave = this.survival ? this.survival.wave : 0;
+    const score = this.survival ? this.survival.score : 0;
+    if (this.survival) this.survival.recordBest();
+    this._netPush('coopover', wave, score);
+    if (this.net) this.net.send('snap', serializeSnapshot(this));   // flush the event to the guest now
+    this._showCoopOver(wave, score, true);
+  }
+
+  // Shared co-op game-over — shown on BOTH peers (guest gets it via the 'coopover'
+  // event). Persistent stay-connected lobby + Retry lands in the next slice.
+  _showCoopOver(wave, score) {
+    if (this.state === 'result') { /* already over */ }
+    this.audio.sfx('lose');
+    this._setPlayInput(false); this.input.exitLock();
+    this.state = 'result';
+    this.hud.show(false);
+    if (this.survival && this.survival.hudEl) this.survival.hudEl.classList.add('hidden');
+    if (this._svHudEl) this._svHudEl.style.display = 'none';
+    this._clearCoopHud();
+    const el = this._showCoopOverlay(`
+      <div class="coop-title">You Both Fell</div>
+      <div class="coop-sub" style="text-align:center">Wave <b>${wave}</b> · Score <b>${score}</b></div>
+      <div class="coop-status">The Wobble Coalition is insufferably pleased with itself.</div>
+      <button class="btn ghost" data-act="leave">⏏ Leave to Menu</button>`);
+    el.querySelector('[data-act="leave"]').addEventListener('click', () => this.quitToMenu());
+  }
+
+  // ---------- co-op: down/revive HUD (works for host + guest) ----------
+  _ensureCoopHud() {
+    if (this._coopHud) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'coop-hud';
+    wrap.innerHTML = '<div class="coop-vignette"></div><div class="coop-downmsg"></div><div class="coop-alert"></div><div class="coop-marker"></div>';
+    this.root.appendChild(wrap);
+    this._coopHud = wrap;
+    this._coopVignette = wrap.querySelector('.coop-vignette');
+    this._coopDownMsg = wrap.querySelector('.coop-downmsg');
+    this._coopAlert = wrap.querySelector('.coop-alert');
+    this._coopMarker = wrap.querySelector('.coop-marker');
+  }
+  _clearCoopHud() {
+    if (this._coopHud) { this._coopHud.remove(); this._coopHud = null; this._coopVignette = this._coopDownMsg = this._coopAlert = this._coopMarker = null; }
+  }
+
+  _updateCoopHud() {
+    if (!this.coopRole || this.state !== 'playing') { this._clearCoopHud(); return; }
+    this._ensureCoopHud();
+    // resolve my own + my partner's down state, whichever side we're on
+    let meDowned = false, meDead = false, meBleed = 0, meRevive = 0;
+    let pPos = null, pDowned = false, pRevive = 0, pBleed = 0;
+    if (this.coopRole === 'host') {
+      const me = this.player, partner = this._guestPlayer;
+      meDowned = me.downed; meDead = me.dead; meBleed = me.bleedT; meRevive = me.reviveProg;
+      if (partner) { pPos = partner.pos; pDowned = partner.downed; pRevive = partner.reviveProg; pBleed = partner.bleedT; }
+    } else {
+      const gp = this._guestNetState || {};
+      meDowned = !!gp.downed; meDead = !!gp.dead; meBleed = gp.bleedT || 0; meRevive = gp.reviveProg || 0;
+      const hs = this._hostState;
+      if (hs && this._hostAvatar) { pPos = this._hostAvatar.position; pDowned = hs.st === 1; pRevive = hs.reviveProg || 0; pBleed = hs.bleedT || 0; }
+    }
+    // MY down state: red vignette + centre message
+    this._coopVignette.style.opacity = meDowned ? '1' : '0';
+    if (meDowned) {
+      this._coopDownMsg.style.display = 'block';
+      this._coopDownMsg.innerHTML = meRevive > 0.02
+        ? `<div class="cd-big">BEING REVIVED…</div><div class="cd-bar"><i style="width:${Math.round(meRevive * 100)}%"></i></div>`
+        : `<div class="cd-big">YOU'RE DOWN</div><div class="cd-sub">Hold on — a teammate can revive you</div><div class="cd-timer">${Math.ceil(meBleed)}s</div>`;
+    } else { this._coopDownMsg.style.display = 'none'; }
+    // PARTNER down: top alert + a projected marker over them
+    if (pPos && pDowned && !meDowned && !meDead) {
+      const key = this.isTouch ? 'USE' : codeLabel(this.settings.bindings.interact);
+      const dist = this.player.pos.distanceTo(pPos);
+      const inRange = dist <= COOP.REVIVE_RANGE;
+      this._coopAlert.style.display = 'block';
+      this._coopAlert.textContent = inRange ? `⚠ PARTNER DOWN — hold ${key} to revive` : `⚠ PARTNER DOWN — reach them! ${Math.ceil(pBleed)}s`;
+      const v = new THREE.Vector3(pPos.x, pPos.y + 1.6, pPos.z).project(this.camera);
+      if (v.z < 1) {
+        const x = (v.x * 0.5 + 0.5) * window.innerWidth, y = (-v.y * 0.5 + 0.5) * window.innerHeight;
+        this._coopMarker.style.display = 'block';
+        this._coopMarker.style.transform = `translate(-50%,-50%) translate(${x}px,${y}px)`;
+        this._coopMarker.innerHTML = inRange
+          ? `<div class="cm-pip rev">＋</div><div class="cm-lbl">${key} · ${Math.round(pRevive * 100)}%</div>`
+          : `<div class="cm-pip">▾</div><div class="cm-lbl">${Math.round(dist)}m · ${Math.ceil(pBleed)}s</div>`;
+      } else { this._coopMarker.style.display = 'none'; }
+    } else {
+      this._coopAlert.style.display = 'none';
+      this._coopMarker.style.display = 'none';
+    }
+  }
+
   // MANUAL host (no relays): produce an offer, paste back the guest's answer.
   async coopHostManual() {
     const net = createManual('host'); this._pendingNet = net;
@@ -703,6 +833,7 @@ export class Game {
 
     interpolateGhosts(this, dt);
     this._updateGuestHud(dt, scoped);
+    this._updateCoopHud();
     if (this.aureole) this.aureole.rotation.z += dt * 0.01;
     this.input.endFrame();
   }
@@ -1101,6 +1232,7 @@ export class Game {
     }
     // advance any co-op/dummy players sharing the world
     for (const rp of this.players) { if (rp !== this.player) this._updateRemotePlayer(rp, dt, ctx); }
+    if (this.coopRole === 'host') this._updateDownsAndRevives(dt, ctx);
     // touch QoL: auto-reload a dry magazine
     if (this.isTouch && this.player.weapon && this.player.weapon.needsReload() && this.player.weapon.reloading <= 0) {
       if (this.player.weapon.startReload()) this.audio.sfx('reload');
@@ -1146,6 +1278,7 @@ export class Game {
     // HUD
     this.hud.update(dt, hs, this.enemies, this.player);
     this.hud.setTurret(this.vehicle ? { x: this.vehicle.aim.x, y: this.vehicle.aim.y, locked: !!this.vehicle.lockedTarget } : null);
+    if (this.coopRole) this._updateCoopHud();
 
     // player death (Survival runs its own game-over; campaign rooms use onFail)
     if (this.player.dead && this.state === 'playing' && !this.survival) ctx.onFail('Sgt. Orion is down. The eulogy will have to wait.');

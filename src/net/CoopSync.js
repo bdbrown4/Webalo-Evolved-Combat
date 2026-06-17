@@ -44,7 +44,7 @@ export function serializeInput(player, input, touch, seq) {
     seq,
     x: r2(player.pos.x), y: r2(player.pos.y), z: r2(player.pos.z),
     yaw: r3(player.yaw), pitch: r3(player.pitch), h: r2(player.curHeight),
-    f: !!fireHeld, a: !!input.isDown('ads'), g: !!input.isDown('grenade'), c: !!input.isDown('crouch'),
+    f: !!fireHeld, a: !!input.isDown('ads'), g: !!input.isDown('grenade'), c: !!input.isDown('crouch'), i: !!input.isDown('interact'),
     ev,
   };
 }
@@ -61,7 +61,7 @@ export class NetInputProxy {
     this.latest = null;
   }
   feed(pkt) {
-    this._held = { fire: pkt.f, ads: pkt.a, grenade: pkt.g, crouch: pkt.c };
+    this._held = { fire: pkt.f, ads: pkt.a, grenade: pkt.g, crouch: pkt.c, interact: pkt.i };
     if (pkt.ev && pkt.ev.length) this._evQueue.push(...pkt.ev);
     this.latest = pkt;
   }
@@ -89,12 +89,15 @@ export function serializeSnapshot(game) {
   for (const pr of game.projectiles) p.push([pr.id, pr.type, r2(pr.pos.x), r2(pr.pos.y), r2(pr.pos.z)]);
   return {
     e, p,
-    hp: local ? [r2(local.pos.x), r2(local.pos.y), r2(local.pos.z), r3(local.yaw), Math.round(local.health), Math.round(local.shield), local.dead ? 1 : 0] : null,
+    hp: local ? [r2(local.pos.x), r2(local.pos.y), r2(local.pos.z), r3(local.yaw), Math.round(local.health), Math.round(local.shield), pstate(local), Math.ceil(local.bleedT), r2(local.reviveProg)] : null,
     gp: guest ? guestState(guest) : null,
     sv: sv ? [sv.wave, sv.score, sv.state, sv._live ? sv._live.filter((x) => !x.dead).length : 0] : null,
     ev: game._netEvents.length ? game._netEvents.splice(0) : null,
   };
 }
+
+// 0 = up, 1 = downed, 2 = dead — compact player-state code for snapshots.
+function pstate(p) { return p.dead ? 2 : p.downed ? 1 : 0; }
 
 // The guest's own authoritative state (health/ammo/grenades/score) — drives its
 // HUD, since the host owns all of it.
@@ -102,6 +105,7 @@ function guestState(g) {
   const w = g.weapon;
   return {
     health: Math.round(g.health), healthMax: g.healthMax, shield: Math.round(g.shield), shieldMax: g.shieldMax, dead: g.dead ? 1 : 0,
+    downed: g.downed ? 1 : 0, bleedT: Math.ceil(g.bleedT), reviveProg: r2(g.reviveProg),
     weapon: w ? w.name : '—', altName: w && w.def.alt ? w.def.alt.name : null, reticle: w ? w.def.reticle : 'dot',
     ammo: w ? w.ammo : 0, reserve: w ? w.reserve : 0, reloading: w ? w.reloading > 0 : false,
     grenades: g.grenades, grenadeType: g.grenadeType,
@@ -143,15 +147,21 @@ export function applySnapshot(game, snap) {
   }
   for (const [id, pg] of game._projGhosts) { if (!pseen.has(id)) { game.scene.remove(pg.mesh); disposeMesh(pg.mesh); game._projGhosts.delete(id); } }
 
-  // host avatar (the buddy from the guest's POV)
-  if (snap.hp && game._hostAvatar) {
+  // host avatar (the buddy from the guest's POV) + the host's down/bleed/revive state
+  if (snap.hp) {
     const h = snap.hp;
-    game._hostAvatar._tx = h[0]; game._hostAvatar._ty = h[1]; game._hostAvatar._tz = h[2]; game._hostAvatar._tyaw = h[3];
-    game._hostAvatar.visible = !h[6];
+    if (game._hostAvatar) {
+      game._hostAvatar._tx = h[0]; game._hostAvatar._ty = h[1]; game._hostAvatar._tz = h[2]; game._hostAvatar._tyaw = h[3];
+      game._hostAvatar.visible = h[6] !== 2;       // hidden once truly dead
+    }
+    game._hostState = { st: h[6], bleedT: h[7], reviveProg: h[8] };
   }
 
-  // authoritative state for HUD
-  if (snap.gp) game._guestNetState = snap.gp;
+  // authoritative state for HUD + our own down/dead status (drives the guest freeze + UI)
+  if (snap.gp) {
+    game._guestNetState = snap.gp;
+    if (game.player) { game.player.downed = !!snap.gp.downed; game.player.dead = !!snap.gp.dead; }
+  }
   if (snap.sv) game._svNetState = snap.sv;
 
   // one-shot events (banners, telegraphs, explosions…)
@@ -190,6 +200,7 @@ function applyEvent(game, ev) {
   else if (k === 'expl') game._spawnExplosion(new THREE.Vector3(ev[1], ev[2], ev[3]), ev[4]);
   else if (k === 'sfx') game.audio && game.audio.sfx(ev[1]);
   else if (k === 'kill') game.hud && game.hud.killFeed(ev[1], ev[2]);
+  else if (k === 'coopover') game._showCoopOver(ev[1], ev[2], false);
 }
 
 export function clearGhosts(game) {

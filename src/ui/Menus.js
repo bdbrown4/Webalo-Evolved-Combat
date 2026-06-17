@@ -3,6 +3,7 @@
 // driven by callbacks the Game wires in. Reads/writes Settings directly.
 
 import { ACTIONS, codeLabel } from '../core/Settings.js';
+import { GAMEPAD_MAP } from '../core/Input.js';
 import { CAMPAIGN, loadProgress } from '../missions/campaign.js';
 import { DIFFICULTIES, DIFFICULTY_ORDER } from '../core/Difficulty.js';
 
@@ -20,6 +21,15 @@ export class Menus {
   }
 
   _click() { this.audio.ensure(); this.audio.sfx('ui'); }
+
+  // Footer controls hint, matched to the active input device (touch / gamepad /
+  // keyboard). pollGamepad runs every frame regardless of state, so _gpActive is
+  // live even at the menu.
+  _controlsHint() {
+    if (document.documentElement.classList.contains('touch')) return '<span class="kbd">Drag</span> look · <span class="kbd">L-stick</span> move · <span class="kbd">FIRE</span> shoot';
+    if (this.input && this.input._gpActive) return '<span class="kbd">L-Stick</span> move · <span class="kbd">R-Stick</span> look · <span class="kbd">RT</span> fire · <span class="kbd">Ⓐ</span> jump · <span class="kbd">Start</span> pause';
+    return '<span class="kbd">WASD</span> move · <span class="kbd">Mouse</span> look · <span class="kbd">L-Click</span> fire · <span class="kbd">Esc</span> pause';
+  }
 
   clear() { this.el.innerHTML = ''; this.screen = null; }
   hide() { this.clear(); }
@@ -48,7 +58,7 @@ export class Menus {
         </div>
         <div class="menu-footer">
           Open source under MIT · all assets procedural, all audio synthesized<br/>
-          <span class="kbd">WASD</span> move · <span class="kbd">Mouse</span> look · <span class="kbd">L-Click</span> fire · <span class="kbd">Esc</span> pause
+          ${this._controlsHint()}
         </div>
       </div>`;
     this.el.querySelectorAll('[data-act]').forEach((b) => b.addEventListener('click', () => {
@@ -366,6 +376,12 @@ export class Menus {
       });
       body.appendChild(this._row(a.label, '', btn));
     });
+    // Gamepad reference — auto-detected, fixed layout (not rebindable yet)
+    const gp = document.createElement('div');
+    gp.className = 'gp-ref';
+    gp.innerHTML = '<div class="gp-ref-head">🎮 Gamepad <span>· auto-detected · plug in and play</span></div>'
+      + '<div class="gp-grid">' + GAMEPAD_MAP.map((m) => `<div class="gp-rrow"><span class="gp-act">${m.label}</span><span class="gp-btn">${m.button}</span></div>`).join('') + '</div>';
+    body.appendChild(gp);
   }
 
   _renderAudio(body) {

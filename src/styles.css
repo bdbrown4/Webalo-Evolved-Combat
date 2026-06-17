@@ -739,3 +739,16 @@ html.touch .crawl-skip { padding: 12px 22px; font-size: 15px; }
 .coop-arrow { position: absolute; left: 0; top: 0; display: none; text-align: center; }
 .ca-chev { display: inline-block; font-size: 30px; line-height: 1; color: #ff6a6a; text-shadow: 0 1px 6px rgba(0,0,0,0.9); }
 .ca-lbl { display: block; font-size: 11px; font-weight: 700; color: #ffb0b0; text-shadow: 0 1px 5px rgba(0,0,0,0.9); }
+
+/* ---------- Gamepad reference card (Settings ▸ Controls) ---------- */
+.gp-ref { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--panel-edge); }
+.gp-ref-head { font-size: 14px; font-weight: 700; color: var(--ink); letter-spacing: 0.4px; margin-bottom: 10px; }
+.gp-ref-head span { font-weight: 400; font-size: 12px; color: var(--ink-dim); letter-spacing: 0; }
+.gp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 18px; }
+.gp-rrow { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 5px 0; border-bottom: 1px dotted rgba(255,255,255,0.08); }
+.gp-act { color: var(--ink-dim); font-size: 13px; }
+.gp-btn {
+  flex: 0 0 auto; padding: 2px 9px; border-radius: 6px; font-size: 12px; font-weight: 700; color: var(--ink);
+  background: rgba(95,208,230,0.12); border: 1px solid rgba(95,208,230,0.4); white-space: nowrap;
+}
+@media (max-width: 560px) { .gp-grid { grid-template-columns: 1fr; } }

@@ -2,6 +2,31 @@
 // current keybindings, manages pointer lock, accumulates mouse-look deltas, and
 // supports interactive rebinding (capture the next physical input for an action).
 
+// The fixed Xbox-style gamepad layout, surfaced in the UI (Settings reference,
+// menu footer, tutorial). Single source of truth — pollGamepad() implements it.
+// GAMEPAD_MAP is the human-readable reference list; GAMEPAD_BUTTONS is the
+// per-action lookup the tutorial uses for inline labels.
+export const GAMEPAD_MAP = [
+  { label: 'Move', button: 'Left Stick' },
+  { label: 'Look', button: 'Right Stick' },
+  { label: 'Fire', button: 'RT' },
+  { label: 'Aim / alt-fire', button: 'LT' },
+  { label: 'Jump', button: 'Ⓐ' },
+  { label: 'Melee', button: 'Ⓑ' },
+  { label: 'Reload', button: 'Ⓧ' },
+  { label: 'Swap weapon', button: 'Ⓨ' },
+  { label: 'Grenade', button: 'RB' },
+  { label: 'Interact / revive', button: 'LB' },
+  { label: 'Sprint', button: 'Left Stick (push fully)' },
+  { label: 'Crouch', button: 'L3 (click stick)' },
+  { label: 'Pause', button: 'Start' },
+];
+export const GAMEPAD_BUTTONS = {
+  fire: 'RT', ads: 'LT', jump: 'Ⓐ', melee: 'Ⓑ', reload: 'Ⓧ', swap: 'Ⓨ',
+  grenade: 'RB', interact: 'LB', crouch: 'L3', pause: 'Start', sprint: 'Left Stick',
+  forward: 'Left Stick', back: 'Left Stick', left: 'Left Stick', right: 'Left Stick',
+};
+
 export class Input {
   constructor(canvas, settings) {
     this.canvas = canvas;

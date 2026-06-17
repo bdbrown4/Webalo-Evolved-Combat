@@ -1192,7 +1192,7 @@ export class Game {
   update() {
     // controller -> virtual input (before the play step reads it this frame)
     this.input.pollGamepad();
-    if (this.input._gpActive && !this._gpWasActive && this.state === 'playing') this.hud.banner('CONTROLLER', 'Gamepad connected.', 1.4);
+    if (this.input._gpActive && !this._gpWasActive && this.state === 'playing') this.hud.banner('CONTROLLER READY', 'Full layout in Settings ▸ Controls', 2.2);
     this._gpWasActive = this.input._gpActive;
     if (this.input.consumeGamepadPause()) {
       if (this.state === 'playing') this.togglePause();

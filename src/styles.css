@@ -685,6 +685,15 @@ html.touch .crawl-skip { padding: 12px 22px; font-size: 15px; }
   user-select: all;
 }
 .coop-status { color: var(--hud-green); font-size: 13px; min-height: 17px; }
+.coop-wait { display: flex; align-items: center; justify-content: center; gap: 9px; min-height: 18px; }
+.coop-spinner {
+  width: 15px; height: 15px; flex: 0 0 auto; border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.18); border-top-color: var(--hud-amber);
+  animation: coop-spin 0.8s linear infinite;
+}
+.coop-spinner-ok { border-color: rgba(126,255,158,0.35); border-top-color: var(--hud-green); animation: none; }
+.coop-dim { color: var(--ink-dim); font-size: 12px; opacity: 0.7; }
+@keyframes coop-spin { to { transform: rotate(360deg); } }
 .coop-blob {
   width: 100%; box-sizing: border-box; height: 76px; resize: vertical;
   padding: 9px 11px; border-radius: 8px; background: rgba(12,22,30,0.85);

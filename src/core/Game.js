@@ -557,7 +557,7 @@ export class Game {
     this._coopOverlayEl = el;
     return el;
   }
-  _clearCoopOverlay() { if (this._coopOverlayEl) { this._coopOverlayEl.remove(); this._coopOverlayEl = null; } }
+  _clearCoopOverlay() { this._coopClearTimers(); if (this._coopOverlayEl) { this._coopOverlayEl.remove(); this._coopOverlayEl = null; } }
   _coopCancel(net) { try { net && net.close(); } catch (e) { /* gone */ } this._pendingNet = null; this._clearCoopOverlay(); this.onQuit && this.onQuit(); }
 
   // HOST over Trystero relays: show a room code, wait for the guest, then begin.
@@ -566,14 +566,20 @@ export class Game {
     const net = hostTrystero(code); this._pendingNet = net;
     const el = this._showCoopOverlay(`
       <div class="coop-title">Hosting Co-op</div>
-      <div class="coop-sub">Send this code to your buddy — they pick <b>Join</b> and enter it:</div>
+      <div class="coop-sub">Send this code to your friend — they open Survival and pick <b>Join</b>:</div>
       <div class="coop-code">${code}</div>
       <button class="btn" data-act="copy">⧉ Copy Code</button>
-      <div class="coop-status">Waiting for a player to join…</div>
+      <div class="coop-wait"><span class="coop-spinner"></span><span class="coop-status">Waiting for a friend to join…</span></div>
       <button class="btn ghost" data-act="cancel">Cancel</button>`);
-    el.querySelector('[data-act="copy"]').addEventListener('click', () => { try { navigator.clipboard.writeText(code); } catch (e) {} });
+    const copyBtn = el.querySelector('[data-act="copy"]');
+    copyBtn.addEventListener('click', () => { try { navigator.clipboard.writeText(code); copyBtn.textContent = '✓ Copied'; setTimeout(() => { copyBtn.textContent = '⧉ Copy Code'; }, 1200); } catch (e) {} });
     el.querySelector('[data-act="cancel"]').addEventListener('click', () => this._coopCancel(net));
-    net.onState((s) => { if (s === 'connected' && this.coopRole !== 'host') { this._pendingNet = null; this._clearCoopOverlay(); this.startCoopHost(net); } });
+    net.onState((s) => {
+      if (s === 'connected' && this.coopRole !== 'host') {
+        this._coopSetStatus(el, 'Friend connected! Launching…', true);
+        this._coopLaunchTimer = setTimeout(() => { this._pendingNet = null; this._clearCoopOverlay(); this.startCoopHost(net); }, 700);
+      }
+    });
   }
 
   // JOIN over Trystero relays: enter the host's code, connect, wait for 'start'.
@@ -581,11 +587,34 @@ export class Game {
     const net = joinTrystero(code); this._pendingNet = net;
     const el = this._showCoopOverlay(`
       <div class="coop-title">Joining ${code}</div>
-      <div class="coop-status">Connecting to host…</div>
+      <div class="coop-wait"><span class="coop-spinner"></span><span class="coop-status">Reaching your friend…</span></div>
+      <div class="coop-dim">Peer-to-peer can take a few seconds to link up.</div>
       <button class="btn ghost" data-act="cancel">Cancel</button>`);
     el.querySelector('[data-act="cancel"]').addEventListener('click', () => this._coopCancel(net));
     this.joinCoop(net);
-    net.onState((s) => { if (s === 'connected') { const st = el.querySelector('.coop-status'); if (st) st.textContent = 'Connected — building arena…'; } });
+    // reassure after a beat, fail clearly if it never links up
+    this._coopReassure = setTimeout(() => this._coopSetStatus(el, 'Still linking… hang tight (relays can be slow).'), 5000);
+    this._coopFailTimer = setTimeout(() => { if (!this.level) this._coopFail(el, net, 'Couldn’t reach the host. Double-check the code and that they’re still hosting — or try Manual connect.'); }, 25000);
+    net.onState((s) => { if (s === 'connected') this._coopSetStatus(el, 'Connected! Starting…', true); });
+  }
+
+  _coopSetStatus(el, text, ok) {
+    const st = el && el.querySelector('.coop-status'); if (st) st.textContent = text;
+    if (ok) { const sp = el.querySelector('.coop-spinner'); if (sp) sp.classList.add('coop-spinner-ok'); }
+  }
+  _coopFail(el, net, msg) {
+    try { net.close(); } catch (e) { /* gone */ }
+    this._pendingNet = null; this._coopClearTimers();
+    const panel = el.querySelector('.coop-panel');
+    panel.innerHTML = `
+      <div class="coop-title">Couldn’t connect</div>
+      <div class="coop-sub">${msg}</div>
+      <button class="btn ghost" data-act="back">← Back</button>`;
+    panel.querySelector('[data-act="back"]').addEventListener('click', () => { this._clearCoopOverlay(); this.onQuit && this.onQuit(); });
+  }
+  _coopClearTimers() {
+    clearTimeout(this._coopReassure); clearTimeout(this._coopFailTimer); clearTimeout(this._coopLaunchTimer);
+    this._coopReassure = this._coopFailTimer = this._coopLaunchTimer = null;
   }
 
   // MANUAL host (no relays): produce an offer, paste back the guest's answer.
@@ -610,7 +639,7 @@ export class Game {
       if (!ans) { st.textContent = 'Paste the answer code first.'; return; }
       try { await net.manual.acceptAnswer(ans); st.textContent = 'Linking…'; } catch (e) { st.textContent = 'That answer code looks invalid.'; }
     });
-    net.onState((s) => { if (s === 'connected' && this.coopRole !== 'host') { this._pendingNet = null; this._clearCoopOverlay(); this.startCoopHost(net); } });
+    net.onState((s) => { if (s === 'connected' && this.coopRole !== 'host') { this._coopSetStatus(el, 'Connected! Launching…', true); this._coopLaunchTimer = setTimeout(() => { this._pendingNet = null; this._clearCoopOverlay(); this.startCoopHost(net); }, 700); } });
   }
 
   // MANUAL join (no relays): paste the host's offer, generate an answer to send back.

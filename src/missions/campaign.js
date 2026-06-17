@@ -310,7 +310,7 @@ export function loadProgress() {
     const raw = localStorage.getItem(PROGRESS_KEY);
     if (raw) return JSON.parse(raw);
   } catch (e) { /* ignore */ }
-  return { unlocked: 0, completed: [] };
+  return { unlocked: 0, completed: [], perks: [] };
 }
 
 export function saveProgress(p) {

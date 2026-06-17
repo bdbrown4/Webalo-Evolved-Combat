@@ -113,7 +113,7 @@ export class Vehicle {
       const muzzle = this.pos.clone().addScaledVector(nf, 0.6); muzzle.y += 2.0;
       if (best) {
         ctx.spawnTracer && ctx.spawnTracer(muzzle, best.aimPoint());
-        best.takeDamage(34, { source: this.pos });
+        best.takeDamage(34, { shieldMult: ctx.player ? ctx.player.shieldDmgMult : 1, source: this.pos }); // Goo-Eater perk
         ctx.onHitmark && ctx.onHitmark();
       } else {
         const aimW = new THREE.Vector3(this.aim.x, this.aim.y, 0.5).unproject(this.camera);

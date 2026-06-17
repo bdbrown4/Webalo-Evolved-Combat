@@ -44,6 +44,7 @@ export class Weapon {
     this.reserve = this.def.reserve;
     this.cooldown = 0;
     this.reloading = 0;
+    this.reloadMult = 1;   // perk: Quick Hands scales this down
   }
 
   get name() { return this.def.name; }
@@ -61,7 +62,7 @@ export class Weapon {
 
   startReload() {
     if (this.reloading > 0 || this.ammo >= this.def.magazine || this.reserve <= 0) return false;
-    this.reloading = this.def.reloadTime;
+    this.reloading = this.def.reloadTime * this.reloadMult;
     return true;
   }
 

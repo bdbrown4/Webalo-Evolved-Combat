@@ -18,11 +18,12 @@ import { LevelBuilder } from '../world/LevelBuilder.js';
 import { AssetFactory } from './AssetFactory.js';
 import { getDifficulty, DIFFICULTY_ORDER } from './Difficulty.js';
 import { codeLabel } from './Settings.js';
+import { PERKS, PERK_IDS, applyPerk } from './Perks.js';
 import { HUD } from '../ui/HUD.js';
 import { TouchControls } from '../ui/TouchControls.js';
 import { Tutorial, TUTORIAL_MISSION } from '../ui/Tutorial.js';
 import { Survival, SURVIVAL_MISSION } from '../ui/Survival.js';
-import { CAMPAIGN, markCompleted, loadCheckpoint, saveCheckpoint, clearCheckpoint } from '../missions/campaign.js';
+import { CAMPAIGN, markCompleted, loadCheckpoint, saveCheckpoint, clearCheckpoint, loadProgress, saveProgress } from '../missions/campaign.js';
 
 // Touch-device detection. `?touch=1`/`?touch=0` force it on/off (handy for hybrid
 // laptops and for testing the touch UI in a desktop browser).
@@ -106,6 +107,8 @@ export class Game {
     // Single static hook: every enemy hit (hitscan, projectile, turret) routes here.
     Enemy.onDamage = (pos, amount, crit) => { if (this.state === 'playing') this._spawnDamageNumber(pos, amount, crit); };
 
+    this._runPerks = []; // between-mission perks chosen this campaign run (persisted with progress)
+
     // Touch: build the on-screen controls and flag the document so the HUD/menus
     // adopt their touch layout. Shown only while actually playing (_setPlayInput).
     this.isTouch = detectTouch();
@@ -163,6 +166,9 @@ export class Game {
     this.missionIndex = Math.max(0, Math.min(index, CAMPAIGN.length - 1));
     this._resume = !!opts.resume;
     if (!this._resume) clearCheckpoint(this.missionIndex); // fresh start wipes any stale checkpoint
+    // run perks: a fresh start at mission 0 clears the run; otherwise load the saved set
+    if (this.missionIndex === 0 && !this._resume) { this._runPerks = []; this._saveRunPerks(); }
+    else { this._runPerks = loadProgress().perks || []; }
     this.state = 'missioncard';
     this._showMissionCard(CAMPAIGN[this.missionIndex]);
   }
@@ -174,6 +180,7 @@ export class Game {
   startTutorial() {
     this.missionIndex = 0;
     this._resume = false;
+    this._runPerks = [];                     // training is a clean slate (no campaign perks)
     this._beginMission(TUTORIAL_MISSION);
     this.level.freeplay = true;              // no room win/advance — the script owns flow
     this.player.dmgTakenMult = 0;            // safe sandbox — no damage during training
@@ -186,6 +193,7 @@ export class Game {
   startSurvival() {
     this.missionIndex = 0;
     this._resume = false;
+    this._runPerks = [];                     // Survival is its own challenge — no campaign perks
     this._beginMission(SURVIVAL_MISSION);
     this.level.freeplay = true;
     this.survival = new Survival(this.root, this, () => this.quitToMenu());
@@ -202,6 +210,7 @@ export class Game {
           <div class="mission-num">Mission ${this.missionIndex + 1} of ${CAMPAIGN.length}</div>
           <div class="mission-name">${mission.name}</div>
           <div class="mission-brief">${mission.brief}</div>
+          ${this._runPerks.length ? `<div class="mission-perks">◆ Upgrades: ${this._runPerks.map((id) => (PERKS[id] ? PERKS[id].name : id)).join(' · ')}</div>` : ''}
           <div style="margin-bottom:20px"><span style="color:var(--ink-dim);letter-spacing:1px">DIFFICULTY:</span>
             <button class="btn ghost" data-act="diff" style="display:inline-block;padding:7px 16px;margin-left:8px">${getDifficulty(this.settings.data.difficulty).name}</button></div>
           <button class="btn primary" style="display:inline-block" data-act="go">▶ Begin Mission</button>
@@ -262,7 +271,9 @@ export class Game {
     this.player = new Player(this.camera, spawn);
     this.player.dmgTakenMult = this._diff.dmgTaken;
     mission.startWeapons.forEach((w) => this.player.giveWeapon(w));
+    this._applyPerks(this.player);                         // run perks: maxes/mults + refill
     if (cp && cp.player) this.player.applySnapshot(cp.player);
+    this.player.weapons.forEach((w) => { w.reloadMult = this.player.reloadMult; }); // mirror onto (possibly rebuilt) weapons
     this._setViewModel(this.player.weapon ? this.player.weapon.key : null);
 
     this.enemies.length = 0; this.projectiles.length = 0; this.fx.length = 0;
@@ -440,20 +451,41 @@ export class Game {
     setTimeout(() => this._showResult(false, false), 2200);
   }
 
+  // ---------- between-mission perks ----------
+  _applyPerks(player) {
+    for (const id of this._runPerks) applyPerk(player, id);
+    player.shield = player.shieldMax;          // start the mission topped up to the perked maxes
+    player.health = player.healthMax;
+    if (player.grenadeBonus) { player.grenades.frag += player.grenadeBonus; player.grenades.goober += player.grenadeBonus; }
+  }
+  _saveRunPerks() { const p = loadProgress(); p.perks = this._runPerks.slice(); saveProgress(p); }
+  _choosePerk(id) {
+    if (id && PERKS[id] && !this._runPerks.includes(id)) { this._runPerks.push(id); this._saveRunPerks(); }
+    this.startMission(this.missionIndex + 1);
+  }
+
   _showResult(win, finaleDone) {
     this.hud.show(false);
     this._clearResult();
     this.result = document.createElement('div');
     this.result.className = 'interactive';
     const next = this.missionIndex + 1 < CAMPAIGN.length;
+    // a non-finale win offers a perk pick — 3 drawn from the unowned pool
+    const perkPick = win && next && !finaleDone;
+    const choices = perkPick ? PERK_IDS.filter((id) => !this._runPerks.includes(id)).sort(() => Math.random() - 0.5).slice(0, 3) : [];
+    const perkSection = choices.length
+      ? `<div class="perk-pick"><div class="perk-pick-head">◆ Choose an upgrade</div><div class="perk-cards">${
+        choices.map((id) => `<button class="perk-card" data-perk="${id}"><b>${PERKS[id].name}</b><span>${PERKS[id].desc}</span></button>`).join('')
+      }</div></div>` : '';
     this.result.innerHTML = `
       <div class="screen">
         <div class="title-block">
           <div class="game-title" style="font-size:54px">${finaleDone ? 'The Halo Goes Dark' : win ? 'Mission Complete' : 'You Are Down'}</div>
           <div class="game-tag">${finaleDone ? 'Sgt. Orion rides the wreckage out. The Aureole is silent. Roll credits.' : win ? CAMPAIGN[this.missionIndex].outro : 'The Wobble Coalition will be insufferable about this.'}</div>
         </div>
+        ${perkSection}
         <div class="menu-list">
-          ${win && next && !finaleDone ? '<button class="btn primary" data-act="next">▶ Next Mission</button>' : ''}
+          ${perkPick && !choices.length ? '<button class="btn primary" data-act="next">▶ Next Mission</button>' : ''}
           ${!win ? '<button class="btn primary" data-act="retry">↻ Retry Mission</button>' : ''}
           ${finaleDone ? '<button class="btn primary" data-act="menu">★ Finish</button>' : '<button class="btn" data-act="menu">⏏ Mission Select</button>'}
         </div>
@@ -461,6 +493,7 @@ export class Game {
     this.root.appendChild(this.result);
     const handler = (a) => { this.audio.sfx('ui'); if (a === 'next') this.startMission(this.missionIndex + 1); else if (a === 'retry') this.restartCheckpoint(); else { this._clearResult(); this.quitToMenu(); this.onShowSelect && this.onShowSelect(); } };
     this.result.querySelectorAll('[data-act]').forEach((b) => b.addEventListener('click', () => handler(b.dataset.act)));
+    this.result.querySelectorAll('[data-perk]').forEach((b) => b.addEventListener('click', () => { this.audio.sfx('objective'); this._choosePerk(b.dataset.perk); }));
   }
   _clearResult() { if (this.result) { this.result.remove(); this.result = null; } if (this.card) { this.card.remove(); this.card = null; } }
 
@@ -767,6 +800,7 @@ export class Game {
   _onEnemyKilled(e) {
     this.hud.killFeed(e.meta.name, e.meta.scoreColor);
     this._spawnGoo(e.pos, e.meta.scoreColor);
+    if (this.player && this.player.healOnKill && !this.player.dead && !e._noSiphon) this.player.addHealth(this.player.healOnKill); // perk: Goo Siphon (earned kills only)
     if (this.enemies.filter((x) => !x.dead).length === 0) this._triggerSlowmo(); // screen-clearing kill
   }
 

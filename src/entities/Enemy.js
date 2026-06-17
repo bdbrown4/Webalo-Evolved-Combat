@@ -276,6 +276,7 @@ export class Enemy {
     if (ctx.player.pos.distanceTo(this.pos) < R) ctx.player.takeDamage(this.meta.dmg, this.pos);
     ctx.shake && ctx.shake(0.5);
     ctx.audio && ctx.audio.sfx('explosion');
+    this._noSiphon = true;          // it blew itself up on you — no heal reward
     this._die(ctx.player.pos);
   }
 

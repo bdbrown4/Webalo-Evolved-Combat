@@ -490,7 +490,7 @@ export class LevelBuilder {
     room._lastAlive = aliveCount; room._lastHp = aliveHp;
     if (room._stuckT > 30) {
       room._stuckT = 0;
-      for (const e of room.enemies) { if (!e.dead && e.type !== 'boss') e.takeDamage(1e9, { source: player.pos }); }
+      for (const e of room.enemies) { if (!e.dead && e.type !== 'boss') { e._noSiphon = true; e.takeDamage(1e9, { source: player.pos }); } } // engine cleanup, not a player kill
       ctx.onBanner && ctx.onBanner('AREA SECURED', 'IRIS purged a straggler that slipped the geometry.', 1.8);
     }
   }

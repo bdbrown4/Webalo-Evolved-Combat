@@ -25,8 +25,19 @@ export class Player {
     this.curHeight = this.height;
     this.grounded = false;
 
-    this.shield = SHIELD_MAX;
-    this.health = HEALTH_MAX;
+    // base stats (instance-level so between-mission perks can scale them)
+    this.shieldMax = SHIELD_MAX;
+    this.healthMax = HEALTH_MAX;
+    this.shieldRegen = SHIELD_REGEN_RATE;
+    this.shieldRegenDelay = SHIELD_REGEN_DELAY;
+    this.healMult = 1;          // perk: Field Rations
+    this.moveMult = 1;          // perk: Light Step
+    this.shieldDmgMult = 1;     // perk: Goo-Eater (vs enemy shields)
+    this.healOnKill = 0;        // perk: Goo Siphon
+    this.reloadMult = 1;        // perk: Quick Hands (mirrored onto weapons)
+    this.grenadeBonus = 0;      // perk: Bandolier
+    this.shield = this.shieldMax;
+    this.health = this.healthMax;
     this.regenT = 0;
     this.dead = false;
 
@@ -67,8 +78,9 @@ export class Player {
     if (!WEAPONS[key]) return;
     const existing = this.weapons.find((w) => w.key === key);
     if (existing) { existing.addReserve(existing.def.magazine * 2); return; }
-    if (this.weapons.length < 2) { this.weapons.push(new Weapon(key)); }
-    else { this.weapons[this.current] = new Weapon(key); }
+    const made = new Weapon(key); made.reloadMult = this.reloadMult; // carry the Quick Hands perk
+    if (this.weapons.length < 2) { this.weapons.push(made); }
+    else { this.weapons[this.current] = made; }
   }
 
   get weapon() { return this.weapons[this.current] || null; }
@@ -124,7 +136,7 @@ export class Player {
     if (this.health <= 0) { this.health = 0; this.dead = true; }
   }
 
-  addHealth(amount) { this.health = Math.min(HEALTH_MAX, this.health + amount); }
+  addHealth(amount) { this.health = Math.min(this.healthMax, this.health + amount * this.healMult); }
 
   update(dt, input, settings, ctx) {
     if (this.dead) return;
@@ -163,7 +175,7 @@ export class Player {
 
     const sprint = input.isDown('sprint') && input.isDown('forward') && !crouching;
     const base = crouching ? 3.0 : 5.4;
-    const speed = sprint ? 8.2 : base;
+    const speed = (sprint ? 8.2 : base) * this.moveMult;
 
     const fwd = new THREE.Vector3(Math.sin(this.yaw), 0, Math.cos(this.yaw));
     // screen-right = forward × up; with +Z-forward at yaw 0 that is (-cos, 0, sin)
@@ -195,11 +207,11 @@ export class Player {
   }
 
   _regen(dt, ctx) {
-    if (this.regenT < SHIELD_REGEN_DELAY) {
+    if (this.regenT < this.shieldRegenDelay) {
       this.regenT += dt;
-    } else if (this.shield < SHIELD_MAX) {
+    } else if (this.shield < this.shieldMax) {
       const before = this.shield;
-      this.shield = Math.min(SHIELD_MAX, this.shield + SHIELD_REGEN_RATE * dt);
+      this.shield = Math.min(this.shieldMax, this.shield + this.shieldRegen * dt);
       if (before <= 0 && this.shield > 0) ctx.audio && ctx.audio.sfx('shieldrecharge');
     }
   }
@@ -242,7 +254,7 @@ export class Player {
       ctx.spawnProjectile && ctx.spawnProjectile({
         type: def.projectile, owner: 'player', pos: origin,
         vel: dir.multiplyScalar(def.projectileSpeed), damage: def.damage,
-        splash: def.splash || 0, shieldMult: def.shieldMult || 1, homing: !!def.homing, homingTarget, life: 4,
+        splash: def.splash || 0, shieldMult: (def.shieldMult || 1) * this.shieldDmgMult, homing: !!def.homing, homingTarget, life: 4,
       });
       return;
     }
@@ -300,7 +312,7 @@ export class Player {
     const point = origin.clone().addScaledVector(dir, bestT);
     if (target) {
       let dmg = def.damage * (headshot ? (def.headshotMult || 1) : 1);
-      target.takeDamage(dmg, { shieldMult: def.shieldMult || 1, source: origin, crit: headshot });
+      target.takeDamage(dmg, { shieldMult: (def.shieldMult || 1) * this.shieldDmgMult, source: origin, crit: headshot });
       if (def.knockback) target.vel.add(dir.clone().setY(0).multiplyScalar(def.knockback));
       ctx.spawnTracer && ctx.spawnTracer(origin, point);
       return true;
@@ -415,8 +427,8 @@ export class Player {
   hudState() {
     const stowed = this.weapons.length > 1 ? this.weapons[(this.current + 1) % this.weapons.length] : null;
     return {
-      shield: this.shield, shieldMax: SHIELD_MAX,
-      health: this.health, healthMax: HEALTH_MAX,
+      shield: this.shield, shieldMax: this.shieldMax,
+      health: this.health, healthMax: this.healthMax,
       weapon: this.weapon ? this.weapon.name : '—',
       stowed: stowed ? stowed.name : null,
       reticle: this.weapon ? this.weapon.def.reticle : 'dot',
@@ -427,7 +439,7 @@ export class Player {
       // fraction of fuse left on a held grenade (1 for a goober: armed, no burn)
       cook: this.cooking ? (this.cooking.sticky ? 1 : Math.max(0, this.cooking.fuse / this.cooking.max)) : null,
       dmgSfx: this._consumeDmgSfx(), hitFlash: this.lastHitFlash > 0,
-      lowShield: this.shield <= 0 && this.health < HEALTH_MAX * 0.5,
+      lowShield: this.shield <= 0 && this.health < this.healthMax * 0.5,
     };
   }
   _consumeDmgSfx() { const s = this._dmgSfx; this._dmgSfx = null; return s; }

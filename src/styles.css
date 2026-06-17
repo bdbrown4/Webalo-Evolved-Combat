@@ -642,3 +642,19 @@ html.touch .crawl-skip { padding: 12px 22px; font-size: 15px; }
 }
 .kf-entry.kf-out { opacity: 0; transform: translateX(14px); }
 .kf-x { font-weight: 800; }
+
+/* ---------- Between-mission perks ---------- */
+.perk-pick { margin: 4px 0 18px; text-align: center; }
+.perk-pick-head { color: var(--hud-amber); letter-spacing: 2px; text-transform: uppercase; font-size: 13px; margin-bottom: 12px; }
+.perk-cards { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+.perk-card {
+  pointer-events: auto; cursor: pointer; width: 210px; min-height: 84px;
+  display: flex; flex-direction: column; gap: 6px; text-align: left;
+  padding: 13px 16px; border-radius: 10px;
+  background: rgba(12,22,30,0.7); border: 1px solid var(--panel-edge);
+  color: var(--ink); transition: border-color .15s, transform .15s, background .15s;
+}
+.perk-card b { color: var(--hud-amber); font-size: 15px; }
+.perk-card span { color: var(--ink-dim); font-size: 13px; line-height: 1.35; }
+.perk-card:hover, .perk-card:active { border-color: var(--hud-amber); transform: translateY(-2px); background: rgba(20,34,44,0.9); }
+.mission-perks { color: var(--hud-green); font-size: 13px; letter-spacing: 0.3px; margin-bottom: 14px; }

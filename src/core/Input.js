@@ -17,13 +17,13 @@ export const GAMEPAD_MAP = [
   { label: 'Swap weapon', button: 'Ⓨ' },
   { label: 'Grenade', button: 'RB' },
   { label: 'Interact / revive', button: 'LB' },
-  { label: 'Sprint', button: 'Left Stick (push fully)' },
-  { label: 'Crouch', button: 'L3 (click stick)' },
+  { label: 'Sprint', button: 'L3 / push stick' },
+  { label: 'Crouch', button: 'R3 (click R-stick)' },
   { label: 'Pause', button: 'Start' },
 ];
 export const GAMEPAD_BUTTONS = {
   fire: 'RT', ads: 'LT', jump: 'Ⓐ', melee: 'Ⓑ', reload: 'Ⓧ', swap: 'Ⓨ',
-  grenade: 'RB', interact: 'LB', crouch: 'L3', pause: 'Start', sprint: 'Left Stick',
+  grenade: 'RB', interact: 'LB', crouch: 'R3', pause: 'Start', sprint: 'L3',
   forward: 'Left Stick', back: 'Left Stick', left: 'Left Stick', right: 'Left Stick',
 };
 
@@ -51,7 +51,8 @@ export class Input {
     this._gpAsserted = new Set();    // virtuals the pad currently holds (so it only clears its own)
     this._gpStartPrev = false;
     this._gpStartEdge = false;
-    this._navPrev = { up: false, down: false, confirm: false, back: false }; // gamepad menu-nav edges
+    this._navPrev = { confirm: false, back: false };       // gamepad menu-nav button edges
+    this._navHold = { up: 0, down: 0, left: 0, right: 0 };  // direction auto-repeat frame counters
 
     this._bind();
   }
@@ -79,7 +80,7 @@ export class Input {
   // the virtual action layer + look accumulator, so a pad plays exactly like
   // mouse+keyboard/touch. Standard mapping (Xbox-style): left stick = move,
   // right stick = look, RT fire, LT ADS, A jump, B melee, X reload, Y swap,
-  // RB grenade, LB interact, L3 crouch, Start pause. It only clears the virtuals
+  // RB grenade, LB interact, L3 sprint, R3 crouch, Start pause. It only clears the virtuals
   // it set, so it never stomps keyboard (which OR together) or touch.
   pollGamepad() {
     const pads = (typeof navigator !== 'undefined' && navigator.getGamepads) ? navigator.getGamepads() : [];
@@ -107,7 +108,8 @@ export class Input {
       if (down(0)) next.add('jump');      if (down(1)) next.add('melee');
       if (down(2)) next.add('reload');    if (down(3)) next.add('swap');
       if (down(5)) next.add('grenade');   if (down(4)) next.add('interact');
-      if (down(10)) next.add('crouch');
+      if (down(10)) next.add('sprint');   // L3: click-to-sprint (or push the stick fully)
+      if (down(11)) next.add('crouch');   // R3: click the right stick to crouch
       const start = down(9);
       if (start && !this._gpStartPrev) this._gpStartEdge = true;
       this._gpStartPrev = start;
@@ -120,29 +122,32 @@ export class Input {
   }
   consumeGamepadPause() { const e = this._gpStartEdge; this._gpStartEdge = false; return e; }
 
-  // Menu navigation from the pad, separate from gameplay polling: returns one-shot
-  // EDGES (true only the frame pressed) for D-pad/left-stick up-down, A=confirm,
-  // B=back. Read each frame while NOT playing so a controller drives the menus.
+  // Menu navigation from the pad, separate from gameplay polling. Directions
+  // (D-pad / left stick) AUTO-REPEAT — fire on press, then again after a short
+  // hold (so sliders ramp); A=confirm and B=back are one-shot edges. Read each
+  // frame while NOT playing so a controller drives the menus + settings.
   pollMenuNav() {
     const pads = (typeof navigator !== 'undefined' && navigator.getGamepads) ? navigator.getGamepads() : [];
     let gp = null;
     for (const p of pads) { if (p && p.connected) { gp = p; break; } }
-    const out = { active: !!gp, up: false, down: false, confirm: false, back: false };
+    const out = { active: !!gp, up: false, down: false, left: false, right: false, confirm: false, back: false };
+    const hold = this._navHold;
+    const rep = (on, key) => { if (!on) { hold[key] = 0; return false; } const h = hold[key]++; return h === 0 || (h > 16 && (h - 16) % 5 === 0); };
     if (gp) {
       const b = gp.buttons, a = gp.axes;
       const bd = (i) => !!(b[i] && (b[i].pressed || b[i].value > 0.5));
-      const ly = a[1] || 0;
-      const up = bd(12) || ly < -0.5;            // D-pad up or left-stick up
-      const down = bd(13) || ly > 0.5;           // D-pad down or left-stick down
-      const confirm = bd(0);                     // A
-      const back = bd(1);                        // B
-      out.up = up && !this._navPrev.up;
-      out.down = down && !this._navPrev.down;
+      const lx = a[0] || 0, ly = a[1] || 0;
+      out.up = rep(bd(12) || ly < -0.5, 'up');       // D-pad / left-stick up
+      out.down = rep(bd(13) || ly > 0.5, 'down');
+      out.left = rep(bd(14) || lx < -0.5, 'left');
+      out.right = rep(bd(15) || lx > 0.5, 'right');
+      const confirm = bd(0), back = bd(1);           // A / B (one-shot)
       out.confirm = confirm && !this._navPrev.confirm;
       out.back = back && !this._navPrev.back;
-      this._navPrev = { up, down, confirm, back };
+      this._navPrev = { confirm, back };
     } else {
-      this._navPrev = { up: false, down: false, confirm: false, back: false };
+      hold.up = hold.down = hold.left = hold.right = 0;
+      this._navPrev = { confirm: false, back: false };
     }
     return out;
   }

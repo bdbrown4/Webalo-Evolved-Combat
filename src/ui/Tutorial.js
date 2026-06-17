@@ -154,7 +154,7 @@ export class Tutorial {
       },
       {
         kind: 'task', title: () => 'Sprint',
-        body: () => pick(`Hold <b>${T._lbl('sprint')}</b> while moving forward to sprint.`, 'Push the <b>left stick</b> all the way forward to sprint.', 'Push the <b>left stick</b> all the way forward to sprint.'),
+        body: () => pick(`Hold <b>${T._lbl('sprint')}</b> while moving forward to sprint.`, 'Push the <b>left stick</b> all the way forward to sprint.', 'Click the <b>left stick (L3)</b>, or push it fully forward, to sprint.'),
         check: (g) => g.input.isDown('sprint') && g.input.isDown('forward'),
       },
       {

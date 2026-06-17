@@ -6,6 +6,7 @@ import { Input } from './core/Input.js';
 import { Audio } from './core/Audio.js';
 import { Game } from './core/Game.js';
 import { Menus } from './ui/Menus.js';
+import { GamepadNav } from './ui/GamepadNav.js';
 
 const canvas = document.getElementById('game-canvas');
 const root = document.getElementById('ui-root');
@@ -67,46 +68,30 @@ window.addEventListener('keydown', (e) => {
   else if (game.state === 'paused' && menus.screen === 'pause') { e.preventDefault(); game.togglePause(); }
 });
 
-// ---- Gamepad menu navigation -------------------------------------------------
-// Browsers only expose a pad after a button press, so we listen for the connect
-// event to refresh the menu (and toast a notice) the moment one wakes up. While
-// not actively playing, the left stick / D-pad move a focus highlight over the
-// on-screen buttons, A confirms, B backs out.
+// ---- Gamepad menu navigation + detection -------------------------------------
+// Browsers only expose a pad after a button press (privacy rule), so we watch the
+// active-pad edge EVERY FRAME — the menu reacts the instant the user presses a
+// button, no waiting on the gamepadconnected event. While not playing, GamepadNav
+// drives the menus + settings with the stick + A/B.
 function gpToast(msg) {
   let el = document.getElementById('gp-toast');
   if (!el) { el = document.createElement('div'); el.id = 'gp-toast'; el.className = 'gp-toast'; root.appendChild(el); }
   el.textContent = msg; el.classList.add('show');
   clearTimeout(gpToast._t); gpToast._t = setTimeout(() => el.classList.remove('show'), 2200);
 }
-window.addEventListener('gamepadconnected', () => { gpToast('🎮 Controller connected'); if (game.state === 'menu' && menus.screen === 'main') menus.showMain(); });
-window.addEventListener('gamepaddisconnected', () => { gpToast('🎮 Controller disconnected'); if (game.state === 'menu' && menus.screen === 'main') menus.showMain(); });
+function onGamepadEdge(active) {
+  gpToast(active ? '🎮 Controller connected' : '🎮 Controller disconnected');
+  if (game.state === 'menu' && menus.screen === 'main') menus.showMain();   // refresh footer hints
+}
 
-let gpEls = [], gpIdx = -1;
-const gpVisible = (el) => !!(el && !el.disabled && el.offsetParent !== null && !el.classList.contains('locked'));
-function gpApplyFocus() {
-  gpEls.forEach((el, i) => el.classList.toggle('gp-focus', i === gpIdx));
-  if (gpEls[gpIdx]) gpEls[gpIdx].scrollIntoView({ block: 'nearest' });
-}
-function gpClearFocus() { gpEls.forEach((el) => el.parentElement && el.classList.remove('gp-focus')); gpEls = []; gpIdx = -1; }
-function gpMenuStep() {
-  if (game.state === 'playing') return;                       // gameplay owns the pad while playing
-  const nav = input.pollMenuNav();
-  if (!nav.active) { if (gpEls.length) gpClearFocus(); return; }
-  const els = Array.from(root.querySelectorAll('.btn, .mission-tile, .perk-card')).filter(gpVisible);
-  const same = els.length === gpEls.length && els.every((e, i) => e === gpEls[i]);
-  gpEls = els;
-  if (!same) { gpIdx = els.length ? 0 : -1; gpApplyFocus(); }  // screen changed → focus the first item
-  if (!els.length) return;
-  if (nav.up) { gpIdx = (gpIdx - 1 + els.length) % els.length; gpApplyFocus(); }
-  if (nav.down) { gpIdx = (gpIdx + 1) % els.length; gpApplyFocus(); }
-  if (nav.confirm && gpIdx >= 0 && els[gpIdx]) els[gpIdx].click();
-  if (nav.back) { const b = root.querySelector('[data-act="back"], [data-act="cancel"], [data-act="resume"], [data-act="leave"], [data-act="menu"]'); if (gpVisible(b)) b.click(); }
-}
+const gpNav = new GamepadNav(root, input, game);
+let gpPrevActive = false;
 
 // Render loop
 function frame() {
-  game.update();
-  if (game.state !== 'playing') gpMenuStep(); else if (gpEls.length) gpClearFocus();
+  game.update();                                       // polls the pad → input._gpActive
+  if (input._gpActive !== gpPrevActive) { gpPrevActive = input._gpActive; onGamepadEdge(input._gpActive); }
+  gpNav.step();
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
@@ -117,5 +102,5 @@ menus.showMain();
 // Expose for debugging in the console (dev only; Vite tree-shakes this out of
 // the production build so internals aren't shipped on a global).
 if (import.meta.env && import.meta.env.DEV) {
-  window.__webalo = { game, settings, input, audio, menus };
+  window.__webalo = { game, settings, input, audio, menus, gpNav };
 }

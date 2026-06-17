@@ -21,18 +21,24 @@ export const WEAPONS = {
     damage: 22, shieldMult: 2.2, fireRate: 3, auto: true, splash: 2.2, projectileSpeed: 38,
     magazine: 18, reserve: 90, reloadTime: 1.6, spread: 0.05, range: 50,
     adsZoom: 1.1, sfx: 'goocaster', reticle: 'circle',
+    // ADS-fire: a slow, concentrated blast — bigger splash, hammers shields
+    alt: { name: 'BLAST', damage: 42, splash: 4.2, shieldMult: 3.2, fireRate: 1.3, projectileSpeed: 30, ammoCost: 2 },
   },
   stinger: {
     name: 'VX-9 Stinger', model: 'stinger', mode: 'projectile', projectile: 'shard',
     damage: 16, homing: true, fireRate: 6, auto: true, projectileSpeed: 44, pellets: 1,
     magazine: 18, reserve: 72, reloadTime: 2.2, spread: 0.06, range: 80,
     adsZoom: 1.2, sfx: 'stinger', reticle: 'circle',
+    // ADS-fire: a 3-shard homing volley (costs 3), slower cadence
+    alt: { name: 'VOLLEY', burst: 3, fireRate: 2.2, ammoCost: 3 },
   },
   boomstick: {
     name: 'D-12 Boomstick', model: 'boomstick', mode: 'hitscan',
     damage: 13, headshotMult: 1.3, fireRate: 1.4, auto: false, pellets: 9,
     magazine: 2, reserve: 28, reloadTime: 2.0, spread: 0.10, range: 26, knockback: 8,
     adsZoom: 1.05, sfx: 'boomstick', reticle: 'spread',
+    // ADS-fire: a tight single slug — high damage, long reach
+    alt: { name: 'SLUG', pellets: 1, spread: 0.012, damage: 58, range: 70, fireRate: 1.0, knockback: 14 },
   },
 };
 

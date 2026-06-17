@@ -315,6 +315,8 @@ select, .toggle {
 .ammo .nades { font-size: 13px; color: var(--ink-dim); margin-top: 6px; }
 .ammo .nades b { color: var(--hud-green); }
 .ammo .wstow { font-size: 11px; letter-spacing: 1px; color: var(--ink-dim); text-transform: uppercase; margin-top: 4px; min-height: 14px; }
+.ammo .wmode { font-size: 11px; letter-spacing: 1px; color: var(--hud-amber); text-transform: uppercase; min-height: 14px; opacity: 0.85; }
+.ammo .wmode:empty { min-height: 0; }
 .ammo.reloading .count { color: var(--hud-amber); animation: pulse 0.6s infinite; }
 .ammo .wname.swapped { animation: wswap .3s ease; transform-origin: right center; }
 @keyframes wswap { 0% { transform: scale(1.18); color: #fff; } 100% { transform: scale(1); } }

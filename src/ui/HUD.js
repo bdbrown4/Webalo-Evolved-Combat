@@ -31,6 +31,7 @@ export class HUD {
         <div class="count"><span id="ammo-cur">0</span><span class="reserve">/<span id="ammo-res">0</span></span></div>
         <div class="nades">Grenade: <b id="nade-type">FRAG</b> <span id="nade-count">x2</span></div>
         <div class="wstow" id="w-stow"></div>
+        <div class="wmode" id="w-mode"></div>
       </div>
       <canvas id="tracker" width="132" height="132"></canvas>
       <div id="subtitle" class="hidden"></div>
@@ -138,6 +139,7 @@ export class HUD {
     this.$('#nade-count').textContent = 'x' + state.grenades[state.grenadeType];
     this.$('#ammo-box').classList.toggle('reloading', state.reloading);
     this.$('#w-stow').textContent = state.stowed ? '⇆ ' + state.stowed : '';
+    this.$('#w-mode').textContent = state.altName ? '⊳ ADS · ' + state.altName : '';
     // pulse the weapon name when it changes (swap feedback)
     if (state.weapon !== this._lastWeapon) {
       if (this._lastWeapon !== undefined && state.weapon !== '—') {

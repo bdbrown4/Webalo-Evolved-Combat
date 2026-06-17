@@ -166,7 +166,7 @@ export class Tutorial {
       },
       {
         kind: 'task', title: () => 'Aim down sights',
-        body: () => pick('Hold <b>right-click</b> to aim down the sights — steadier and more accurate.', 'Hold the <b>ADS</b> button to aim down the sights — steadier and more accurate.'),
+        body: () => pick('Hold <b>right-click</b> to aim down the sights — steadier and more accurate. Some weapons fire an <b>alternate mode</b> while you aim.', 'Hold the <b>ADS</b> button to aim down the sights. Some weapons fire an <b>alternate mode</b> while you aim.'),
         check: () => T._adsAcc > 0.5,
       },
       {

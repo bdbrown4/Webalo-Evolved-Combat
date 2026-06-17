@@ -234,28 +234,39 @@ export class Player {
     const wantFire = def.auto ? input.isDown('fire') : input.pressed('fire');
     if (wantFire) {
       if (this.weapon.needsReload()) { if (this.weapon.startReload()) ctx.audio && ctx.audio.sfx('reload'); }
-      else if (this.weapon.canFire()) this._fire(ctx);
+      else if (this.weapon.canFire()) this._fire(ctx, input.isDown('ads'));
     }
   }
 
-  _fire(ctx) {
-    const w = this.weapon, def = w.def;
-    w.consume();
+  // Alt-fire (hold ADS while firing) merges the weapon's `alt` overrides over its
+  // base def: Boomstick slug, Goocaster blast, Stinger volley. Weapons with no
+  // `alt` just fire normally while aiming.
+  _fire(ctx, useAlt) {
+    const w = this.weapon, base = w.def;
+    const isAlt = !!(useAlt && base.alt);
+    const def = isAlt ? Object.assign({}, base, base.alt) : base;
+    w.consume();                                  // -1 ammo, cooldown = 1 / base.fireRate
+    if (isAlt) {
+      w.cooldown = 1 / def.fireRate;              // alt cadence
+      if (def.ammoCost > 1) w.ammo = Math.max(0, w.ammo - (def.ammoCost - 1)); // alt may cost extra
+    }
     this.justFired = 0.06;
     ctx.audio && ctx.audio.sfx(def.sfx);
     ctx.onMuzzleFlash && ctx.onMuzzleFlash(def);
 
     const origin = this.headPoint();
     if (def.mode === 'projectile') {
-      const dir = this._spreadDir(def.spread);
       // Homing shots lock onto whatever you're actually aiming at, not just the
       // nearest body — the projectile falls back to nearest only if that target dies.
       const homingTarget = def.homing ? this._aimTarget(origin, this.lookDir(), ctx) : null;
-      ctx.spawnProjectile && ctx.spawnProjectile({
-        type: def.projectile, owner: 'player', pos: origin,
-        vel: dir.multiplyScalar(def.projectileSpeed), damage: def.damage,
-        splash: def.splash || 0, shieldMult: (def.shieldMult || 1) * this.shieldDmgMult, homing: !!def.homing, homingTarget, life: 4,
-      });
+      for (let s = 0; s < (def.burst || 1); s++) {  // burst = a multi-shot volley (Stinger alt)
+        const dir = this._spreadDir(def.spread);
+        ctx.spawnProjectile && ctx.spawnProjectile({
+          type: def.projectile, owner: 'player', pos: origin,
+          vel: dir.multiplyScalar(def.projectileSpeed), damage: def.damage,
+          splash: def.splash || 0, shieldMult: (def.shieldMult || 1) * this.shieldDmgMult, homing: !!def.homing, homingTarget, life: 4,
+        });
+      }
       return;
     }
     // hitscan, possibly multi-pellet
@@ -430,6 +441,7 @@ export class Player {
       shield: this.shield, shieldMax: this.shieldMax,
       health: this.health, healthMax: this.healthMax,
       weapon: this.weapon ? this.weapon.name : '—',
+      altName: this.weapon && this.weapon.def.alt ? this.weapon.def.alt.name : null,
       stowed: stowed ? stowed.name : null,
       reticle: this.weapon ? this.weapon.def.reticle : 'dot',
       ammo: this.weapon ? this.weapon.ammo : 0,

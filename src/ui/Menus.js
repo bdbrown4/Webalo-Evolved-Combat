@@ -31,7 +31,8 @@ export class Menus {
     return '<span class="kbd">WASD</span> move · <span class="kbd">Mouse</span> look · <span class="kbd">L-Click</span> fire · <span class="kbd">Esc</span> pause';
   }
 
-  clear() { this.el.innerHTML = ''; this.screen = null; }
+  clear() { this._clearGpSyncWait(); this.el.innerHTML = ''; this.screen = null; }
+  _clearGpSyncWait() { if (this._gpSyncWait) { window.removeEventListener('gamepadconnected', this._gpSyncWait); this._gpSyncWait = null; } }
   hide() { this.clear(); }
 
   // ---------------- Main menu ----------------
@@ -59,6 +60,7 @@ export class Menus {
         <div class="menu-footer">
           Open source under MIT · all assets procedural, all audio synthesized<br/>
           ${this._controlsHint()}
+          ${(!(this.input && this.input._gpActive) && typeof navigator !== 'undefined' && navigator.getGamepads) ? '<div class="gp-prompt">🎮 Got a controller? Press any button to connect it.</div>' : ''}
         </div>
       </div>`;
     this.el.querySelectorAll('[data-act]').forEach((b) => b.addEventListener('click', () => {
@@ -380,8 +382,18 @@ export class Menus {
     const gp = document.createElement('div');
     gp.className = 'gp-ref';
     gp.innerHTML = '<div class="gp-ref-head">🎮 Gamepad <span>· auto-detected · plug in and play</span></div>'
+      + '<div class="gp-connect"><button class="btn ghost" data-act="gpsync">🎮 Connect / Sync Controller</button><span class="gp-connect-msg"></span></div>'
       + '<div class="gp-grid">' + GAMEPAD_MAP.map((m) => `<div class="gp-rrow"><span class="gp-act">${m.label}</span><span class="gp-btn">${m.button}</span></div>`).join('') + '</div>';
     body.appendChild(gp);
+    const syncMsg = gp.querySelector('.gp-connect-msg');
+    gp.querySelector('[data-act="gpsync"]').addEventListener('click', () => {
+      this._click();
+      if (this.input && this.input._gpActive) { syncMsg.textContent = '✓ Controller connected'; return; }
+      syncMsg.textContent = 'Press any button on your controller now…';
+      this._clearGpSyncWait();
+      this._gpSyncWait = () => { syncMsg.textContent = '✓ Controller connected'; this._clearGpSyncWait(); };
+      window.addEventListener('gamepadconnected', this._gpSyncWait, { once: true });
+    });
   }
 
   _renderAudio(body) {
@@ -398,6 +410,7 @@ export class Menus {
     body.appendChild(this._row('Field of View', '', this._slider('video.fov', 60, 110, 1, (v) => v + '°')));
     body.appendChild(this._row('Mouse Sensitivity', '', this._slider('mouse.sensitivity', 0.2, 3, 0.05, (v) => parseFloat(v).toFixed(2))));
     body.appendChild(this._row('ADS Sensitivity', 'Look speed while aiming', this._slider('mouse.adsScale', 0.2, 1, 0.05, (v) => parseFloat(v).toFixed(2))));
+    body.appendChild(this._row('Controller Sensitivity', 'Right-stick look speed (gamepad)', this._slider('mouse.padSensitivity', 0.3, 2.5, 0.05, (v) => parseFloat(v).toFixed(2))));
     body.appendChild(this._row('Invert Y Axis', '', this._toggle('mouse.invertY')));
     body.appendChild(this._row('Dynamic Shadows', '', this._toggle('video.shadows')));
     body.appendChild(this._row('Bloom / Glow', 'Soft glow on bright lights and projectiles', this._toggle('video.bloom')));

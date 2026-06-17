@@ -51,6 +51,7 @@ export class Input {
     this._gpAsserted = new Set();    // virtuals the pad currently holds (so it only clears its own)
     this._gpStartPrev = false;
     this._gpStartEdge = false;
+    this._navPrev = { up: false, down: false, confirm: false, back: false }; // gamepad menu-nav edges
 
     this._bind();
   }
@@ -87,7 +88,7 @@ export class Input {
     this._gpActive = !!gp;
     const next = new Set();
     if (gp) {
-      const DZ = 0.18, LOOK = 22;
+      const DZ = 0.18, LOOK = 22 * (this.settings.data.mouse.padSensitivity || 1);
       const dz = (v) => (Math.abs(v) < DZ ? 0 : v);
       const a = gp.axes, b = gp.buttons;
       const down = (i) => !!(b[i] && (b[i].pressed || b[i].value > 0.5));
@@ -118,6 +119,33 @@ export class Input {
     this._gpAsserted = next;
   }
   consumeGamepadPause() { const e = this._gpStartEdge; this._gpStartEdge = false; return e; }
+
+  // Menu navigation from the pad, separate from gameplay polling: returns one-shot
+  // EDGES (true only the frame pressed) for D-pad/left-stick up-down, A=confirm,
+  // B=back. Read each frame while NOT playing so a controller drives the menus.
+  pollMenuNav() {
+    const pads = (typeof navigator !== 'undefined' && navigator.getGamepads) ? navigator.getGamepads() : [];
+    let gp = null;
+    for (const p of pads) { if (p && p.connected) { gp = p; break; } }
+    const out = { active: !!gp, up: false, down: false, confirm: false, back: false };
+    if (gp) {
+      const b = gp.buttons, a = gp.axes;
+      const bd = (i) => !!(b[i] && (b[i].pressed || b[i].value > 0.5));
+      const ly = a[1] || 0;
+      const up = bd(12) || ly < -0.5;            // D-pad up or left-stick up
+      const down = bd(13) || ly > 0.5;           // D-pad down or left-stick down
+      const confirm = bd(0);                     // A
+      const back = bd(1);                        // B
+      out.up = up && !this._navPrev.up;
+      out.down = down && !this._navPrev.down;
+      out.confirm = confirm && !this._navPrev.confirm;
+      out.back = back && !this._navPrev.back;
+      this._navPrev = { up, down, confirm, back };
+    } else {
+      this._navPrev = { up: false, down: false, confirm: false, back: false };
+    }
+    return out;
+  }
 
   requestLock() { if (this.canvas.requestPointerLock) this.canvas.requestPointerLock(); }
   exitLock() { if (document.exitPointerLock) document.exitPointerLock(); }

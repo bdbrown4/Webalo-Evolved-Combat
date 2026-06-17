@@ -38,7 +38,7 @@ const DEFAULTS = {
     swap: 'KeyQ', weapon1: 'Digit1', weapon2: 'Digit2',
     interact: 'KeyF', flashlight: 'KeyT', pause: 'Escape',
   },
-  mouse: { sensitivity: 1.0, adsScale: 0.6, invertY: false },
+  mouse: { sensitivity: 1.0, adsScale: 0.6, invertY: false, padSensitivity: 1.0 },
   audio: { master: 0.8, sfx: 0.9, music: 0.5 },
   video: { quality: 'high', fov: 80, shadows: true, bloom: true, motionTracker: true, viewBob: true },
   difficulty: 'trooper',

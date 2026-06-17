@@ -42,6 +42,7 @@ export class Input {
     this.wheel = 0;
     this.locked = false;
     this.enabled = false;            // only true while actively playing
+    this.lastSource = 'kbd';         // 'kbd' | 'pad' — last input device actively used (drives in-game prompts on desktop)
 
     this._rebindResolver = null;     // fn(code) when capturing a rebind
     this._onLockChange = null;
@@ -113,6 +114,8 @@ export class Input {
       const start = down(9);
       if (start && !this._gpStartPrev) this._gpStartEdge = true;
       this._gpStartPrev = start;
+      // any active button/stick input marks the pad as the device in use
+      if (next.size > 0 || start || lx || ly || rx || ry) this.lastSource = 'pad';
     } else {
       this._gpStartPrev = false;
     }
@@ -177,6 +180,7 @@ export class Input {
   _bind() {
     window.addEventListener('keydown', (e) => {
       if (this._handleCapture(e.code)) { e.preventDefault(); return; }
+      this.lastSource = 'kbd';
       // Always let Escape through to the game (pause), even when not "enabled".
       if (this._codeDown.has(e.code)) return; // ignore auto-repeat
       this._codeDown.add(e.code);
@@ -187,6 +191,7 @@ export class Input {
     this.canvas.addEventListener('mousedown', (e) => {
       const code = this._codeForMouseButton(e.button);
       if (this._handleCapture(code)) { e.preventDefault(); return; }
+      this.lastSource = 'kbd';
       this._codeDown.add(code);
     });
     // Capture-phase window listener so a rebind can grab a MOUSE button even

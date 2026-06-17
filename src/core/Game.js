@@ -18,6 +18,7 @@ import { LevelBuilder } from '../world/LevelBuilder.js';
 import { AssetFactory } from './AssetFactory.js';
 import { getDifficulty, DIFFICULTY_ORDER } from './Difficulty.js';
 import { codeLabel } from './Settings.js';
+import { GAMEPAD_BUTTONS } from './Input.js';
 import { PERKS, PERK_IDS, applyPerk } from './Perks.js';
 import { HUD } from '../ui/HUD.js';
 import { TouchControls } from '../ui/TouchControls.js';
@@ -361,7 +362,7 @@ export class Game {
         // on touch); the contextual Use button also follows the prompt.
         setPrompt: (t) => {
           if (this.touch) this.touch.setInteract(!!t);
-          this.hud.setPrompt(t && t.replace('[Interact]', this.isTouch ? 'Tap USE —' : 'Press ' + codeLabel(this.settings.bindings.interact) + ' —'));
+          this.hud.setPrompt(t && t.replace('[Interact]', (this.isTouch ? 'Tap ' : 'Press ') + this._ctrlKey('interact', 'USE') + ' —'));
         },
         interactPressed: false,
         onObjective: (t) => { this.hud.setObjective(t); this._netPush('obj', t); },
@@ -384,6 +385,15 @@ export class Game {
   _setPlayInput(on) {
     this.input.setEnabled(on);
     if (this.touch) { if (on) this.touch.show(); else this.touch.hide(); }
+  }
+
+  // The control label for an action, matched to the device the player is actually
+  // using right now: touch → the on-screen label, controller → the pad button,
+  // otherwise the keyboard/mouse binding.
+  _ctrlKey(action, touchLabel) {
+    if (this.isTouch) return touchLabel;
+    if (this.input.lastSource === 'pad') return GAMEPAD_BUTTONS[action] || action;
+    return codeLabel(this.settings.bindings[action]);
   }
 
   // ---------- pause / resume ----------
@@ -769,7 +779,7 @@ export class Game {
     const W = window.innerWidth, H = window.innerHeight;
     let aAlert = false, aMarker = false, aName = false, aArrow = false;
     if (pPos && !pDead && !meDowned && !meDead) {
-      const key = this.isTouch ? 'USE' : codeLabel(this.settings.bindings.interact);
+      const key = this._ctrlKey('interact', 'USE');
       const dist = this.player.pos.distanceTo(pPos);
       const inRange = dist <= COOP.REVIVE_RANGE;
       const v = new THREE.Vector3(pPos.x, pPos.y + 1.85, pPos.z).project(this.camera);

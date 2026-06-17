@@ -133,9 +133,10 @@ const RAW_CAMPAIGN = [
           { speaker: 'IRIS', line: "Those floating ones snipe from the rafters. There's a missile pod on the rack to your left. Paint them. Be unsporting about it." },
         ] },
       { kind: 'arena', size: 'l', objectiveText: 'Defend the shaft as drones converge',
-        enemies: [{ type: 'floater', count: 4 }, { type: 'blork', count: 4 }, { type: 'gurg', count: 2 }], pickups: [{ type: 'ammo' }, { type: 'health' }], cover: 0.5, event: 'ambush',
+        enemies: [{ type: 'floater', count: 4 }, { type: 'blork', count: 4 }, { type: 'gurg', count: 2 }, { type: 'popper', count: 2 }], pickups: [{ type: 'ammo' }, { type: 'health' }], cover: 0.5, event: 'ambush',
         dialogue: [
           { speaker: 'Vanguard', line: 'They keep coming up from the shaft. How deep does this thing go?' },
+          { speaker: 'IRIS', line: 'And now the round red ones — they sprint in and detonate. Shoot them early, Sergeant; hugging one is a closed-casket decision.' },
           { speaker: 'IRIS', line: "Reading says 'undefined.' The architects left that field blank, which is the single most reassuring thing I've ever decrypted." },
         ] },
       { kind: 'bridge', size: 'm', objectiveText: 'Reach the master slate and let IRIS decrypt the records',
@@ -156,9 +157,10 @@ const RAW_CAMPAIGN = [
     startWeapons: ['rifle', 'pistol'], finale: false,
     segments: [
       { kind: 'hall', size: 'l', objectiveText: 'Reach the transmitter cathedral',
-        enemies: [{ type: 'blork', count: 6 }, { type: 'gurg', count: 2 }], pickups: [{ type: 'ammo' }], cover: 0.4, event: 'none',
+        enemies: [{ type: 'blork', count: 6 }, { type: 'gurg', count: 2 }, { type: 'bulwark', count: 1 }], pickups: [{ type: 'ammo' }], cover: 0.4, event: 'none',
         dialogue: [
           { speaker: 'IRIS', line: 'Distress signal is dead ahead. Source confirmed. Survivors: zero. Antennae the size of mountains: several.' },
+          { speaker: 'IRIS', line: 'Also a slab of jelly hauling a riot shield. You will not chew through the front — get around it and shoot the part with the regrets.' },
           { speaker: 'Vanguard', line: "Zero survivors but a signal's still pinging. Who's broadcasting?" },
         ] },
       { kind: 'corridor', size: 'm', objectiveText: 'Push through the antenna conduits',
@@ -197,9 +199,10 @@ const RAW_CAMPAIGN = [
           { speaker: 'Vanguard', line: "And it's the only way across?" },
         ] },
       { kind: 'hall', size: 'l', objectiveText: 'Hold the junction and break the Coalition line',
-        enemies: [{ type: 'blork', count: 5 }, { type: 'gurg', count: 2 }, { type: 'floater', count: 3 }], pickups: [{ type: 'weapon', weapon: 'goocaster' }, { type: 'health' }], cover: 0.5, event: 'ambush',
+        enemies: [{ type: 'blork', count: 5 }, { type: 'gurg', count: 2 }, { type: 'floater', count: 3 }, { type: 'blinker', count: 2 }], pickups: [{ type: 'weapon', weapon: 'goocaster' }, { type: 'health' }], cover: 0.5, event: 'ambush',
         dialogue: [
           { speaker: 'Blorkling', line: 'Squeak! Squeak-squeak? (Are we... are we allowed to shoot the big scary one?)' },
+          { speaker: 'IRIS', line: 'Mind the violet ones — they blink sideways the instant you line up a shot. Lead them, or fire the heartbeat after they reappear.' },
           { speaker: 'Vanguard', line: 'They left a goo-cannon just lying here. The Coalition runs this place like a yard sale.' },
         ] },
       { kind: 'corridor', size: 'm', objectiveText: 'Push through the maintenance span to the officer post',
@@ -209,7 +212,7 @@ const RAW_CAMPAIGN = [
           { speaker: 'IRIS', line: 'Their officer is shielding the squad. Pop the bubble before you bother with the rest of them.' },
         ] },
       { kind: 'bridge', size: 'l', objectiveText: 'Cross the rupturing span to the master conduit',
-        enemies: [{ type: 'blork', count: 4 }, { type: 'gurg', count: 3 }, { type: 'floater', count: 2 }, { type: 'wobbler', count: 1 }], pickups: [{ type: 'health' }, { type: 'ammo' }], cover: 0.25, event: 'ambush',
+        enemies: [{ type: 'blork', count: 4 }, { type: 'gurg', count: 3 }, { type: 'floater', count: 2 }, { type: 'wobbler', count: 1 }, { type: 'popper', count: 1 }], pickups: [{ type: 'health' }, { type: 'ammo' }], cover: 0.25, event: 'ambush',
         dialogue: [
           { speaker: 'IRIS', line: "The conduits are venting. Sections of this bridge are now what I would call 'opinion-based flooring.'" },
           { speaker: 'Vanguard', line: "Noted. I'll keep my opinions to the parts that aren't on fire." },
@@ -231,7 +234,7 @@ const RAW_CAMPAIGN = [
     startWeapons: ['rifle', 'stinger'], finale: false,
     segments: [
       { kind: 'hall', size: 'l', objectiveText: 'Breach the throne-concourse',
-        enemies: [{ type: 'blork', count: 6 }, { type: 'gurg', count: 2 }, { type: 'wobbler', count: 1 }], pickups: [{ type: 'ammo' }], cover: 0.5, event: 'ambush',
+        enemies: [{ type: 'blork', count: 6 }, { type: 'gurg', count: 2 }, { type: 'wobbler', count: 1 }, { type: 'bulwark', count: 1 }], pickups: [{ type: 'ammo' }], cover: 0.5, event: 'ambush',
         dialogue: [
           { speaker: 'IRIS', line: "Reading two hundred hostiles ahead and structural integrity at a generous forty percent. I've prepared a eulogy. It's mostly statistics." },
           { speaker: 'Vanguard', line: 'Save it. I do my own eulogy.' },
@@ -243,9 +246,10 @@ const RAW_CAMPAIGN = [
           { speaker: 'IRIS', line: 'Correct. Please do not stand on the parts of the floor that are also leaving.' },
         ] },
       { kind: 'arena', size: 'l', objectiveText: 'Hold the line and overload the throne-junction console',
-        enemies: [{ type: 'blork', count: 5 }, { type: 'gurg', count: 2 }, { type: 'wobbler', count: 2 }, { type: 'floater', count: 2 }], pickups: [{ type: 'health' }, { type: 'ammo' }], cover: 0.4, event: 'reactor',
+        enemies: [{ type: 'blork', count: 5 }, { type: 'gurg', count: 2 }, { type: 'wobbler', count: 2 }, { type: 'floater', count: 2 }, { type: 'medic', count: 1 }], pickups: [{ type: 'health' }, { type: 'ammo' }], cover: 0.4, event: 'reactor',
         dialogue: [
           { speaker: 'Quivermaster Sprocket', line: 'MAINTAIN FORMATION! Per subsection nine, panicking is a fireable offense!' },
+          { speaker: 'IRIS', line: "There's a little green drone topping the big ones back up. Kill the nurse first, Sergeant." },
           { speaker: 'IRIS', line: "Console's hot. The readout's screaming. I find that motivational." },
         ] },
       { kind: 'corridor', size: 'm', objectiveText: 'Reach the core access door',
@@ -265,7 +269,7 @@ const RAW_CAMPAIGN = [
     startWeapons: ['rifle', 'boomstick'], finale: true,
     segments: [
       { kind: 'corridor', size: 'm', objectiveText: 'Reach the transport bay before the deck gives out',
-        enemies: [{ type: 'blork', count: 6 }, { type: 'gurg', count: 2 }], pickups: [{ type: 'ammo' }], cover: 0.4, event: 'ambush',
+        enemies: [{ type: 'blork', count: 6 }, { type: 'gurg', count: 2 }, { type: 'popper', count: 2 }], pickups: [{ type: 'ammo' }], cover: 0.4, event: 'ambush',
         dialogue: [
           { speaker: 'IRIS', line: "Structural integrity is at twelve percent and dropping. I'd round up, but I respect you too much to lie." },
           { speaker: 'Vanguard', line: 'Twelve percent of a ring the size of a continent is still a lot of ring.' },

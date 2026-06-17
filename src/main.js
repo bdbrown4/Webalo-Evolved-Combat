@@ -40,6 +40,7 @@ const game = new Game(canvas, root, settings, input, audio);
 const menus = new Menus(root, settings, input, audio, {
   onStart: (index) => { menus.hide(); game.startMission(index); },
   onTutorial: () => { menus.hide(); game.startTutorial(); },
+  onSurvival: () => { menus.hide(); game.startSurvival(); },
   onResume: () => { game.resume(); },
   onRestart: () => { menus.hide(); game.restartFresh(); },
   onQuit: () => { game.quitToMenu(); },

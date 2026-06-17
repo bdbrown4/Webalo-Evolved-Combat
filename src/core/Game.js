@@ -21,6 +21,7 @@ import { codeLabel } from './Settings.js';
 import { HUD } from '../ui/HUD.js';
 import { TouchControls } from '../ui/TouchControls.js';
 import { Tutorial, TUTORIAL_MISSION } from '../ui/Tutorial.js';
+import { Survival, SURVIVAL_MISSION } from '../ui/Survival.js';
 import { CAMPAIGN, markCompleted, loadCheckpoint, saveCheckpoint, clearCheckpoint } from '../missions/campaign.js';
 
 // Touch-device detection. `?touch=1`/`?touch=0` force it on/off (handy for hybrid
@@ -165,10 +166,21 @@ export class Game {
     this.missionIndex = 0;
     this._resume = false;
     this._beginMission(TUTORIAL_MISSION);
-    this.level.tutorial = true;
+    this.level.freeplay = true;              // no room win/advance — the script owns flow
     this.player.dmgTakenMult = 0;            // safe sandbox — no damage during training
     this.tutorial = new Tutorial(this.root, this, () => this.quitToMenu());
     this.tutorial.start();
+  }
+
+  // Endless Survival/Horde mode. A single arena with escalating waves owned by the
+  // Survival controller; the level's win/advance is suppressed (freeplay).
+  startSurvival() {
+    this.missionIndex = 0;
+    this._resume = false;
+    this._beginMission(SURVIVAL_MISSION);
+    this.level.freeplay = true;
+    this.survival = new Survival(this.root, this, () => this.quitToMenu());
+    this.survival.start();
   }
 
   _showMissionCard(mission) {
@@ -264,6 +276,7 @@ export class Game {
 
   _teardownWorld() {
     if (this.tutorial) { this.tutorial.destroy(); this.tutorial = null; }
+    if (this.survival) { this.survival.destroy(); this.survival = null; }
     if (this.vehicle) { this.scene.remove(this.vehicle.mesh); this.vehicle = null; }
     if (this.player) this.player.driving = false;
     this._clearNadeModel();
@@ -355,7 +368,13 @@ export class Game {
     this.input.exitLock();
     this.onQuit && this.onQuit();
   }
-  restartFresh() { this._clearResult(); clearCheckpoint(this.missionIndex); this.startMission(this.missionIndex, { resume: false }); this.onResume && this.onResume(); }
+  restartFresh() {
+    this._clearResult();
+    // freeplay modes restart themselves, not a campaign mission
+    if (this.survival) { this.startSurvival(); this.onResume && this.onResume(); return; }
+    if (this.tutorial) { this.startTutorial(); this.onResume && this.onResume(); return; }
+    clearCheckpoint(this.missionIndex); this.startMission(this.missionIndex, { resume: false }); this.onResume && this.onResume();
+  }
   restartCheckpoint() { this._clearResult(); this._resume = true; this._beginMission(CAMPAIGN[this.missionIndex]); this.onResume && this.onResume(); }
 
   _scaleEnemy(e) {
@@ -691,6 +710,7 @@ export class Game {
     // level flow
     this.level.update(dt, this.player, ctx);
     if (this.tutorial) this.tutorial.update(dt);
+    if (this.survival) this.survival.update(dt);
 
     // signature ring drift
     if (this.aureole) this.aureole.rotation.z += dt * 0.01;
@@ -699,8 +719,8 @@ export class Game {
     this.hud.update(dt, hs, this.enemies, this.player);
     this.hud.setTurret(this.vehicle ? { x: this.vehicle.aim.x, y: this.vehicle.aim.y, locked: !!this.vehicle.lockedTarget } : null);
 
-    // player death
-    if (this.player.dead && this.state === 'playing') ctx.onFail('Sgt. Orion is down. The eulogy will have to wait.');
+    // player death (Survival runs its own game-over; campaign rooms use onFail)
+    if (this.player.dead && this.state === 'playing' && !this.survival) ctx.onFail('Sgt. Orion is down. The eulogy will have to wait.');
 
     this.input.endFrame();
   }

@@ -431,9 +431,9 @@ export class LevelBuilder {
       if (this.escapeTime <= 0) { this._fail(ctx, 'Too slow. The Aureole fired and took the ring — and you — with it.'); return; }
     }
 
-    // clear check (skipped in Training — the Tutorial controller owns the flow and
-    // the empty arena would otherwise "clear" and complete the mission instantly)
-    if (!room.cleared && !this.tutorial) {
+    // clear check (skipped in freeplay modes — Tutorial/Survival own their flow and
+    // the empty/looping arena would otherwise "clear" and end the mission instantly)
+    if (!room.cleared && !this.freeplay) {
       const enemiesLeft = room.enemies.filter((e) => !e.dead).length;
       const objectivesDone = room.reactorDone && room.bossDead;
       // A boss room is cleared by defeating the boss alone. The boss spawns adds

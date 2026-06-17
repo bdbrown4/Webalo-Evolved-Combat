@@ -36,6 +36,7 @@ export class HUD {
       <div id="subtitle" class="hidden"></div>
       <div id="banner" class="hidden"><div class="big"></div><div class="small"></div></div>
       <div id="prompt" class="hidden"></div>
+      <div id="killfeed"></div>
     `;
     root.appendChild(this.el);
     this.flash = document.createElement('div'); this.flash.id = 'damage-flash'; root.appendChild(this.flash);
@@ -52,6 +53,19 @@ export class HUD {
   }
 
   show(v) { this.el.classList.toggle('hidden', !v); this.flash.classList.toggle('hidden', !v); }
+
+  // Kill-feed entry: a short-lived "✖ Name" line, colour-keyed to the enemy.
+  killFeed(name, color) {
+    const feed = this.$('#killfeed');
+    if (!feed) return;
+    const hex = '#' + (color || 0xffffff).toString(16).padStart(6, '0');
+    const d = document.createElement('div');
+    d.className = 'kf-entry';
+    d.innerHTML = `<span class="kf-x" style="color:${hex}">✖</span> ${name}`;
+    feed.prepend(d);
+    while (feed.children.length > 5) feed.removeChild(feed.lastChild);
+    setTimeout(() => { d.classList.add('kf-out'); setTimeout(() => d.remove(), 420); }, 2600);
+  }
 
   // Hide per-frame combat overlays when leaving play (they're only rewritten by
   // update(), which stops the moment the state leaves 'playing' — without this

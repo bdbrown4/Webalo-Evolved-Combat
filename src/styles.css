@@ -620,3 +620,25 @@ html.touch .crawl-skip { padding: 12px 22px; font-size: 15px; }
 @media (orientation: portrait) {
   html.touch .survival-hud { top: calc(34px + env(safe-area-inset-top)); }
 }
+
+/* ---------- Combat juice: floating damage numbers + kill feed ---------- */
+#fx-numbers { position: fixed; inset: 0; pointer-events: none; z-index: 11; overflow: hidden; }
+.dmgnum {
+  position: absolute; left: 0; top: 0; white-space: nowrap;
+  font: 800 16px/1 system-ui, sans-serif; color: #fff;
+  text-shadow: 0 2px 4px #000, 0 0 3px #000;
+}
+.dmgnum.crit { font-size: 23px; color: var(--hud-amber); }
+
+#killfeed {
+  position: absolute; top: 92px; right: calc(14px + env(safe-area-inset-right)); z-index: 10;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 3px;
+  pointer-events: none; text-align: right; max-width: 60vw;
+}
+.kf-entry {
+  font: 600 13px/1.2 system-ui, sans-serif; color: var(--ink);
+  background: rgba(8,16,22,0.55); border-radius: 5px; padding: 3px 9px;
+  text-shadow: 0 1px 3px #000; opacity: 1; transition: opacity .4s, transform .4s;
+}
+.kf-entry.kf-out { opacity: 0; transform: translateX(14px); }
+.kf-x { font-weight: 800; }

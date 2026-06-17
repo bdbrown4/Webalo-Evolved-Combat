@@ -97,6 +97,15 @@ export class Game {
     this.focusPrompt = document.getElementById('focus-prompt');
     this._reducedMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 
+    // ---- combat juice: floating damage numbers, kill feed, goo, slow-mo ----
+    this._dmgNums = [];
+    this._numLayer = document.createElement('div');
+    this._numLayer.id = 'fx-numbers';
+    this.root.appendChild(this._numLayer);
+    this._slowmoT = 0; this._slowmoCd = 0;
+    // Single static hook: every enemy hit (hitscan, projectile, turret) routes here.
+    Enemy.onDamage = (pos, amount, crit) => { if (this.state === 'playing') this._spawnDamageNumber(pos, amount, crit); };
+
     // Touch: build the on-screen controls and flag the document so the HUD/menus
     // adopt their touch layout. Shown only while actually playing (_setPlayInput).
     this.isTouch = detectTouch();
@@ -571,7 +580,12 @@ export class Game {
     let dt = this._clock.getDelta();
     if (dt > 0.05) dt = 0.05; // clamp big frame gaps (tab switch)
 
-    if (this.state === 'playing') this._updatePlay(dt);
+    // brief slow-mo punctuates a screen-clearing kill (real-time FX, scaled world)
+    if (this._slowmoCd > 0) this._slowmoCd -= dt;
+    let scale = 1;
+    if (this._slowmoT > 0 && !this._reducedMotion) { this._slowmoT -= dt; scale = 0.4; }
+
+    if (this.state === 'playing') this._updatePlay(dt * scale);
     this._updateFX(dt);
 
     // screen shake (suppressed for users who prefer reduced motion)
@@ -691,7 +705,7 @@ export class Game {
     if (hs.dmgSfx) this.audio.sfx(hs.dmgSfx);
 
     // enemies
-    for (const e of this.enemies) e.update(dt, ctx);
+    for (const e of this.enemies) { e.update(dt, ctx); if (e.dead && !e._killHandled) { e._killHandled = true; this._onEnemyKilled(e); } }
     // cull finished-dead enemies
     for (let i = this.enemies.length - 1; i >= 0; i--) {
       const e = this.enemies[i];
@@ -734,11 +748,71 @@ export class Game {
       const t = Math.max(0, f.life / f.maxLife);
       if (f.kind === 'tracer' || f.kind === 'impact' || f.kind === 'muzzle') { if (f.mesh.material) f.mesh.material.opacity = t; }
       if (f.kind === 'boom') { const s = 1 + (1 - t) * f.r; f.mesh.scale.setScalar(s); f.mesh.material.opacity = t * 0.85; if (f.light) f.light.intensity = 3 * t; }
+      if (f.kind === 'goo') {
+        f.vel.y -= 18 * dt;
+        f.mesh.position.addScaledVector(f.vel, dt);
+        if (f.mesh.position.y < 0.08) { f.mesh.position.y = 0.08; f.vel.set(0, 0, 0); }
+        if (f.mesh.material) f.mesh.material.opacity = Math.min(0.9, t * 1.4);
+      }
       if (f.life <= 0) {
         if (f.parent) f.parent.remove(f.mesh); else this.scene.remove(f.mesh);
         if (f.light) this.scene.remove(f.light);
         this.fx.splice(i, 1);
       }
+    }
+    this._updateDamageNumbers(dt);
+  }
+
+  // ---- combat juice ----------------------------------------------------------
+  _onEnemyKilled(e) {
+    this.hud.killFeed(e.meta.name, e.meta.scoreColor);
+    this._spawnGoo(e.pos, e.meta.scoreColor);
+    if (this.enemies.filter((x) => !x.dead).length === 0) this._triggerSlowmo(); // screen-clearing kill
+  }
+
+  _triggerSlowmo() {
+    if (this._reducedMotion || this._slowmoCd > 0) return;
+    this._slowmoT = 0.55; this._slowmoCd = 3.0;
+  }
+
+  _spawnGoo(pos, color) {
+    if (this._reducedMotion) return;
+    const c = color || 0x9cff9c;
+    for (let i = 0; i < 7; i++) {
+      const m = new THREE.Mesh(new THREE.SphereGeometry(0.08 + Math.random() * 0.1, 6, 5),
+        new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: 0.9 }));
+      m.position.set(pos.x, pos.y + 1.0, pos.z);
+      this.scene.add(m);
+      const a = Math.random() * Math.PI * 2, sp = 2 + Math.random() * 4.5;
+      const vel = new THREE.Vector3(Math.cos(a) * sp, 3 + Math.random() * 3.5, Math.sin(a) * sp);
+      this.fx.push({ mesh: m, life: 0.55 + Math.random() * 0.35, maxLife: 0.9, kind: 'goo', vel });
+    }
+  }
+
+  _spawnDamageNumber(worldPos, amount, crit) {
+    if (this._reducedMotion) return;
+    const el = document.createElement('div');
+    el.className = 'dmgnum' + (crit ? ' crit' : '');
+    el.textContent = Math.max(1, Math.round(amount)) + (crit ? '!' : '');
+    this._numLayer.appendChild(el);
+    this._dmgNums.push({ el, pos: worldPos.clone(), life: 0.8, maxLife: 0.8, vy: 1.6 + Math.random() * 0.6, dx: (Math.random() - 0.5) * 18 });
+    if (this._dmgNums.length > 40) { const old = this._dmgNums.shift(); old.el.remove(); }
+  }
+
+  _updateDamageNumbers(dt) {
+    if (!this._dmgNums.length) return;
+    const v = new THREE.Vector3();
+    for (let i = this._dmgNums.length - 1; i >= 0; i--) {
+      const n = this._dmgNums[i];
+      n.life -= dt;
+      if (n.life <= 0) { n.el.remove(); this._dmgNums.splice(i, 1); continue; }
+      n.pos.y += n.vy * dt;                                  // float up in world space
+      v.copy(n.pos).project(this.camera);
+      if (v.z > 1) { n.el.style.opacity = '0'; continue; }   // behind the camera
+      const x = (v.x * 0.5 + 0.5) * window.innerWidth + n.dx * (1 - n.life / n.maxLife);
+      const y = (-v.y * 0.5 + 0.5) * window.innerHeight;
+      n.el.style.transform = `translate(-50%,-50%) translate(${x}px,${y}px)`;
+      n.el.style.opacity = String(Math.min(1, (n.life / n.maxLife) * 1.6));
     }
   }
 }

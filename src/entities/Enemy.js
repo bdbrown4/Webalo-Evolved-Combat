@@ -62,6 +62,8 @@ export class Enemy {
         }
       }
     }
+    // floating damage number (Game wires Enemy.onDamage during play)
+    if (Enemy.onDamage) Enemy.onDamage(this.aimPoint(), amount, !!opts.crit);
     let dmg = amount;
     if (this.shield > 0) {
       const sd = dmg * (opts.shieldMult || 1);

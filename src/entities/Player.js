@@ -300,7 +300,7 @@ export class Player {
     const point = origin.clone().addScaledVector(dir, bestT);
     if (target) {
       let dmg = def.damage * (headshot ? (def.headshotMult || 1) : 1);
-      target.takeDamage(dmg, { shieldMult: def.shieldMult || 1, source: origin });
+      target.takeDamage(dmg, { shieldMult: def.shieldMult || 1, source: origin, crit: headshot });
       if (def.knockback) target.vel.add(dir.clone().setY(0).multiplyScalar(def.knockback));
       ctx.spawnTracer && ctx.spawnTracer(origin, point);
       return true;

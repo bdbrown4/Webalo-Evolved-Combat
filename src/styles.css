@@ -662,6 +662,7 @@ html.touch .crawl-skip { padding: 12px 22px; font-size: 15px; }
 .mission-perks { color: var(--hud-green); font-size: 13px; letter-spacing: 0.3px; margin-bottom: 14px; }
 
 /* ---------- Co-op lobby ---------- */
+.coop-divider { color: var(--ink-dim); font-size: 12px; letter-spacing: 1px; text-transform: uppercase; text-align: center; margin: 6px 0 2px; opacity: 0.7; }
 .coop-join-row { display: flex; gap: 8px; align-items: stretch; }
 .coop-join-row .btn { flex: 0 0 auto; }
 .coop-code-input {

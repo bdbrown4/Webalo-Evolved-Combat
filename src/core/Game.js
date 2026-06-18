@@ -27,6 +27,8 @@ import { Survival, SURVIVAL_MISSION } from '../ui/Survival.js';
 import { CAMPAIGN, markCompleted, loadCheckpoint, saveCheckpoint, clearCheckpoint, loadProgress, saveProgress } from '../missions/campaign.js';
 import { serializeSnapshot, applySnapshot, serializeInput, NetInputProxy, interpolateGhosts, clearGhosts, withSeededRandom, NET_SNAP_DT, NET_INPUT_DT } from '../net/CoopSync.js';
 import { hostTrystero, joinTrystero, createManual, makeRoomCode } from '../net/Net.js';
+import { combineMods, noMods, MUTATORS } from './Mutators.js';
+import { saveDailyBest, makeShareCode } from './Daily.js';
 
 // Touch-device detection. `?touch=1`/`?touch=0` force it on/off (handy for hybrid
 // laptops and for testing the touch UI in a desktop browser).
@@ -121,6 +123,8 @@ export class Game {
     Enemy.onDamage = (pos, amount, crit) => { if (this.state === 'playing') this._spawnDamageNumber(pos, amount, crit); };
 
     this._runPerks = []; // between-mission perks chosen this campaign run (persisted with progress)
+    this._mutators = []; this._mods = noMods();   // active run modifiers (Daily Challenge / custom)
+    this._daily = null;                           // { key, mode } while a Daily Challenge run is live
 
     // Touch: build the on-screen controls and flag the document so the HUD/menus
     // adopt their touch layout. Shown only while actually playing (_setPlayInput).
@@ -174,14 +178,32 @@ export class Game {
     this._shadowSize = q === 'high' ? 2048 : 1024;
   }
 
+  // ---------- run modifiers (mutators / daily) ----------
+  // Set the active mutator list (and its folded effect object) for the next run.
+  // Always called on a run's entry point so a previous mutated/daily run can't bleed
+  // into a normal one.
+  _setRunMods(ids) { this._mutators = (ids || []).slice(); this._mods = combineMods(this._mutators); }
+  _modBanner() {
+    if (!this._mutators.length) return;
+    const names = this._mutators.map((id) => (MUTATORS[id] ? MUTATORS[id].icon + ' ' + MUTATORS[id].name : id)).join(' · ');
+    this.hud && this.hud.banner('MODIFIERS', names, 2.6);
+  }
+
   // ---------- mission lifecycle ----------
   startMission(index, opts = {}) {
     this.missionIndex = Math.max(0, Math.min(index, CAMPAIGN.length - 1));
     this._resume = !!opts.resume;
+    this._setRunMods(opts.mutators);
+    this._levelSeed = opts.seed || undefined;            // daily: deterministic arena
+    this._daily = opts.daily || null;
     if (!this._resume) clearCheckpoint(this.missionIndex); // fresh start wipes any stale checkpoint
-    // run perks: a fresh start at mission 0 clears the run; otherwise load the saved set
-    if (this.missionIndex === 0 && !this._resume) { this._runPerks = []; this._saveRunPerks(); }
+    // run perks: a fresh start at mission 0 clears the run; otherwise load the saved set.
+    // a Daily mission is its own one-shot — no campaign perks carried in.
+    if (this._daily) { this._runPerks = []; }
+    else if (this.missionIndex === 0 && !this._resume) { this._runPerks = []; this._saveRunPerks(); }
     else { this._runPerks = loadProgress().perks || []; }
+    // a Daily mission skips the card (fixed difficulty, no perks) and drops straight in
+    if (this._daily) { this._beginMission(CAMPAIGN[this.missionIndex]); return; }
     this.state = 'missioncard';
     this._showMissionCard(CAMPAIGN[this.missionIndex]);
   }
@@ -194,6 +216,7 @@ export class Game {
     this.missionIndex = 0;
     this._resume = false;
     this._runPerks = [];                     // training is a clean slate (no campaign perks)
+    this._setRunMods([]); this._daily = null; this._levelSeed = undefined;
     this._beginMission(TUTORIAL_MISSION);
     this.level.freeplay = true;              // no room win/advance — the script owns flow
     this.player.dmgTakenMult = 0;            // safe sandbox — no damage during training
@@ -202,11 +225,15 @@ export class Game {
   }
 
   // Endless Survival/Horde mode. A single arena with escalating waves owned by the
-  // Survival controller; the level's win/advance is suppressed (freeplay).
-  startSurvival() {
+  // Survival controller; the level's win/advance is suppressed (freeplay). opts carry
+  // the Daily Challenge's seed + mutators (omitted for a normal run).
+  startSurvival(opts = {}) {
     this.missionIndex = 0;
     this._resume = false;
     this._runPerks = [];                     // Survival is its own challenge — no campaign perks
+    this._setRunMods(opts.mutators);
+    this._levelSeed = opts.seed || undefined;
+    this._daily = opts.daily || null;
     this._beginMission(SURVIVAL_MISSION);
     this.level.freeplay = true;
     // dev rig: ?coopdummy=1 drops a second, AI-wandering player so the co-op
@@ -214,6 +241,30 @@ export class Game {
     if (this._coopDummy()) { const s = this.player.pos.clone(); s.x += 4; const d = this.addRemotePlayer(s, { color: 0xff8a3d }); d._dummy = true; }
     this.survival = new Survival(this.root, this, () => this.quitToMenu());
     this.survival.start();
+  }
+
+  // ---------- Daily Challenge ----------
+  // ch is a dailyChallenge() object. Survival is a seeded horde run; Mission is a
+  // rotating campaign mission. Both carry the day's mutators and record a daily best.
+  startDailySurvival(ch) {
+    this.startSurvival({ seed: ch.survival.seed, mutators: ch.survival.mutators, daily: { key: ch.key, mode: 'survival', seed: ch.survival.seed, mutators: ch.survival.mutators } });
+  }
+  startDailyMission(ch) {
+    const d = { key: ch.key, mode: 'mission', index: ch.mission.index, seed: ch.mission.seed, mutators: ch.mission.mutators };
+    this.startMission(ch.mission.index, { seed: ch.mission.seed, mutators: ch.mission.mutators, daily: d });
+  }
+  _replayDaily() {
+    const d = this._daily; if (!d) return;
+    if (d.mode === 'survival') this.startSurvival({ seed: d.seed, mutators: d.mutators, daily: d });
+    else this.startMission(d.index, { seed: d.seed, mutators: d.mutators, daily: d });
+  }
+  // Fold a finished daily run into the day's best and stash a shareable result.
+  _recordDaily(score) {
+    const d = this._daily; if (!d) return null;
+    const s = Math.max(0, Math.round(score));
+    const best = saveDailyBest(d.key, d.mode, { score: s, at: Date.now() });
+    this._lastDaily = { key: d.key, mode: d.mode, score: s, best: best.score, code: makeShareCode(d.key, d.mode, s) };
+    return this._lastDaily;
   }
 
   _showMissionCard(mission) {
@@ -250,7 +301,11 @@ export class Game {
   _beginMission(mission) {
     if (this.card) { this.card.remove(); this.card = null; }
     this._teardownWorld();
-    this._diff = getDifficulty(this.settings.data.difficulty);
+    // Daily Challenges are the same for everyone, so they run at a fixed difficulty
+    // (the day's mutators are the variable, not the tier).
+    this._diff = getDifficulty(this._daily ? 'trooper' : this.settings.data.difficulty);
+    this.physics.gravity = -22 * this._mods.gravity;       // mutators: world gravity (jumps + ragdolls)
+    this._dailyKills = 0; this._dailyStart = (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
     // lighting. Outdoor fog reaches far enough that the Aureole megastructure
     // on the horizon (z ~ -260) is actually visible; interiors stay close.
@@ -289,9 +344,11 @@ export class Game {
 
     // player
     this.player = new Player(this.camera, spawn);
-    this.player.dmgTakenMult = this._diff.dmgTaken;
+    this.player.dmgTakenMult = this._diff.dmgTaken * this._mods.playerDmgTaken;   // mutators
     mission.startWeapons.forEach((w) => this.player.giveWeapon(w));
     this._applyPerks(this.player);                         // run perks: maxes/mults + refill
+    // mutators: scale the marine's max health (after perks set the perked max), top up
+    if (this._mods.playerHealthMax !== 1) { this.player.healthMax = Math.max(1, Math.round(this.player.healthMax * this._mods.playerHealthMax)); this.player.health = this.player.healthMax; }
     if (cp && cp.player) this.player.applySnapshot(cp.player);
     this.player.weapons.forEach((w) => { w.reloadMult = this.player.reloadMult; }); // mirror onto (possibly rebuilt) weapons
     this._setViewModel(this.player.weapon ? this.player.weapon.key : null);
@@ -312,6 +369,7 @@ export class Game {
     this.hud.clearTransients();
     this.state = 'playing';
     this._setPlayInput(true);
+    this._modBanner();                       // announce active mutators (no-op for a clean run)
     if (!this.isTouch) this.input.requestLock();
   }
 
@@ -434,7 +492,7 @@ export class Game {
   }
   quitToMenu() {
     // null the role/net BEFORE closing so our own close doesn't read as "partner left"
-    const net = this.net; this.net = null; this.coopRole = null; this._levelSeed = undefined; this._coopLeft = false; this._coopOver = false;
+    const net = this.net; this.net = null; this.coopRole = null; this._levelSeed = undefined; this._coopLeft = false; this._coopOver = false; this._daily = null;
     if (net) { try { net.close(); } catch (e) { /* already gone */ } }
     if (this._pendingNet) { try { this._pendingNet.close(); } catch (e) { /* gone */ } this._pendingNet = null; }
     this._clearCoopOverlay();
@@ -452,6 +510,8 @@ export class Game {
     // a guest can't restart on its own, so it just resumes (host owns the restart).
     if (this.coopRole === 'host') { this._coopBuildMission(); this.onResume && this.onResume(); return; }
     if (this.coopRole === 'guest') { this.onResume && this.onResume(); return; }
+    // a Daily Challenge restarts the exact same seed + mutators
+    if (this._daily) { this._replayDaily(); this.onResume && this.onResume(); return; }
     // freeplay modes restart themselves, not a campaign mission
     if (this.survival) { this.startSurvival(); this.onResume && this.onResume(); return; }
     if (this.tutorial) { this.startTutorial(); this.onResume && this.onResume(); return; }
@@ -460,8 +520,9 @@ export class Game {
   restartCheckpoint() { this._clearResult(); this._resume = true; this._beginMission(CAMPAIGN[this.missionIndex]); this.onResume && this.onResume(); }
 
   _scaleEnemy(e) {
-    const h = this._diff ? this._diff.enemyHealth : 1;
+    const h = (this._diff ? this._diff.enemyHealth : 1) * this._mods.enemyHealth;   // difficulty × mutators
     e.hp *= h; e.maxHp *= h; e.shield *= h; e.maxShield *= h;
+    e.speed *= this._mods.enemySpeed;
   }
 
   // ---------- co-op: remote players ----------
@@ -567,6 +628,8 @@ export class Game {
     this._coopOver = false; this._coopLeft = false; this._lastEscPush = null;
     this._levelSeed = (Date.now() & 0x7fffffff) || 1;
     this._resume = false;
+    this._setRunMods([]); this._daily = null;       // co-op runs aren't mutated/daily
+
     const campaign = this._coopMode === 'campaign';
     if (campaign) {
       this._beginMission(CAMPAIGN[this.missionIndex]);             // win/advance handled by the level
@@ -604,6 +667,7 @@ export class Game {
     this._levelSeed = d.seed;
     this._coopMode = d.mode || 'survival';
     this._resume = false; this._runPerks = [];
+    this._setRunMods([]); this._daily = null;
     const campaign = this._coopMode === 'campaign';
     this.missionIndex = campaign ? (d.mi || 0) : 0;
     this._guestRunPerks = d.gPerks || [];                          // mirrors the host's view of our perks
@@ -1149,6 +1213,16 @@ export class Game {
       setTimeout(() => { if (this.coopRole === 'host') this._showCoopResult(isFinaleDone); }, 2600);
       return;
     }
+    // Daily Mission: a one-shot scored run (completion + kills + speed) — its own
+    // result screen, no campaign save/perks/advance.
+    if (this._daily) {
+      const secs = ((typeof performance !== 'undefined' ? performance.now() : Date.now()) - this._dailyStart) / 1000;
+      const score = 5000 + this._dailyKills * 10 + Math.max(0, Math.round(1800 - secs * 6));
+      this._recordDaily(score);
+      this.hud.banner('MISSION COMPLETE', m.outro, 3);
+      setTimeout(() => this._showDailyResult(true), 2600);
+      return;
+    }
     markCompleted(this.missionIndex);
     clearCheckpoint(this.missionIndex);
     this.hud.banner('MISSION COMPLETE', m.outro, 3);
@@ -1177,8 +1251,48 @@ export class Game {
     this._clearMeleeModel();
     if (this._viewModel) this._viewModel.visible = !this.player.driving;
     this.audio.sfx('lose');
+    // Daily Mission failure still scores kills (partial credit), then its own screen
+    if (this._daily) {
+      this._recordDaily(this._dailyKills * 10);
+      this.hud.banner('DOWN', reason || 'You fell on the Aureole.', 2.5);
+      setTimeout(() => this._showDailyResult(false), 2200);
+      return;
+    }
     this.hud.banner('DOWN', reason || 'You fell on the Aureole.', 2.5);
     setTimeout(() => this._showResult(false, false), 2200);
+  }
+
+  // Daily run result (mission win/lose, or routed here from Survival's game-over).
+  // Shows the score, today's best, and a copyable share code; Retry replays the
+  // exact same daily; otherwise back to the menu.
+  _showDailyResult(win) {
+    this.hud.show(false);
+    this._clearResult();
+    const r = this._lastDaily || { score: 0, best: 0, code: '' };
+    const isMission = this._daily && this._daily.mode === 'mission';
+    const beat = r.best <= r.score;
+    this.result = document.createElement('div');
+    this.result.className = 'interactive';
+    this.result.innerHTML = `
+      <div class="screen">
+        <div class="title-block">
+          <div class="game-title" style="font-size:48px">${isMission ? (win ? 'Daily Mission Cleared' : 'Daily Mission — Down') : 'Daily Survival'}</div>
+          <div class="game-tag">Score <b>${r.score}</b> · Today's best <b>${r.best}</b>${beat && r.score > 0 ? ' &nbsp;★ new best!' : ''}</div>
+        </div>
+        <div class="daily-share">
+          <div class="daily-share-label">Share your result — paste it to a friend to challenge today's seed:</div>
+          <div class="daily-code-row"><code class="daily-code">${r.code}</code><button class="btn" data-act="copy">⧉ Copy</button></div>
+        </div>
+        <div class="menu-list">
+          <button class="btn primary" data-act="retry">↻ Replay Today's Daily</button>
+          <button class="btn" data-act="menu">⏏ Main Menu</button>
+        </div>
+      </div>`;
+    this.root.appendChild(this.result);
+    const copyBtn = this.result.querySelector('[data-act="copy"]');
+    copyBtn.addEventListener('click', () => { try { navigator.clipboard.writeText(r.code); copyBtn.textContent = '✓ Copied'; setTimeout(() => { copyBtn.textContent = '⧉ Copy'; }, 1200); } catch (e) {} });
+    this.result.querySelector('[data-act="retry"]').addEventListener('click', () => { this.audio.sfx('ui'); this._clearResult(); this._replayDaily(); });
+    this.result.querySelector('[data-act="menu"]').addEventListener('click', () => { this.audio.sfx('ui'); this._clearResult(); this.quitToMenu(); });
   }
 
   // ---------- co-op: campaign mission flow (host-authoritative) ----------
@@ -1649,6 +1763,7 @@ export class Game {
   // ---- combat juice ----------------------------------------------------------
   _onEnemyKilled(e) {
     this.hud.killFeed(e.meta.name, e.meta.scoreColor);
+    if (this._daily && this._daily.mode === 'mission') this._dailyKills++;   // mission-of-the-day scoring
     this._spawnGoo(e.pos, e.meta.scoreColor);
     if (this.player && this.player.healOnKill && !this.player.dead && !e._noSiphon) this.player.addHealth(this.player.healOnKill); // perk: Goo Siphon (earned kills only)
     if (this.enemies.filter((x) => !x.dead).length === 0) this._triggerSlowmo(); // screen-clearing kill

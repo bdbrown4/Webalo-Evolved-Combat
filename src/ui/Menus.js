@@ -6,6 +6,8 @@ import { ACTIONS, codeLabel } from '../core/Settings.js';
 import { GAMEPAD_MAP } from '../core/Input.js';
 import { CAMPAIGN, loadProgress } from '../missions/campaign.js';
 import { DIFFICULTIES, DIFFICULTY_ORDER } from '../core/Difficulty.js';
+import { MUTATORS } from '../core/Mutators.js';
+import { dailyChallenge, loadDailyBest, parseShareCode } from '../core/Daily.js';
 
 export class Menus {
   constructor(root, settings, input, audio, handlers) {
@@ -53,6 +55,7 @@ export class Menus {
           <button class="btn" data-act="continue" ${hasProgress ? '' : 'disabled'}>↻ Continue${hasProgress ? ' — Mission ' + (p.unlocked + 1) : ''}</button>
           <button class="btn" data-act="tutorial">🎓 Tutorial</button>
           <button class="btn" data-act="survival">💀 Survival</button>
+          <button class="btn" data-act="daily">📅 Daily Challenge</button>
           <button class="btn" data-act="select">☰ Mission Select</button>
           <button class="btn" data-act="settings">⚙ Settings</button>
           <button class="btn ghost" data-act="credits">ℹ Credits</button>
@@ -70,6 +73,7 @@ export class Menus {
       else if (a === 'continue') this.h.onStart(loadProgress().unlocked);
       else if (a === 'tutorial') this.h.onTutorial && this.h.onTutorial();
       else if (a === 'survival') this.showSurvival();
+      else if (a === 'daily') this.showDaily();
       else if (a === 'select') this.showMissionSelect();
       else if (a === 'settings') this.showSettings('controls', () => this.showMain());
       else if (a === 'credits') this.showCredits();
@@ -108,6 +112,66 @@ export class Menus {
     this.el.querySelector('[data-act="join"]').addEventListener('click', doJoin);
     code.addEventListener('keydown', (e) => { if (e.code === 'Enter') { e.preventDefault(); doJoin(); } });
     this.el.querySelector('[data-act="manual"]').addEventListener('click', () => { this._click(); this.showCoopManual('campaign'); });
+    this.el.querySelector('[data-act="back"]').addEventListener('click', () => { this._click(); this.showMain(); });
+  }
+
+  // ---------------- Daily Challenge ----------------
+  // One seeded run per calendar day, the same for everyone. Two cards — Survival of
+  // the Day and Mission of the Day — each showing the day's mutators and your best.
+  showDaily() {
+    this.clear();
+    this.screen = 'daily';
+    const ch = dailyChallenge();
+    const mutChips = (ids) => ids.map((id) => { const m = MUTATORS[id]; return `<span class="mut-chip" title="${m ? m.desc : ''}">${m ? m.icon + ' ' + m.name : id}</span>`; }).join('');
+    const bestLine = (mode) => { const b = loadDailyBest(ch.key, mode); return b ? `Your best today · <b>${b.score}</b>` : 'Not played yet today'; };
+    const mName = (CAMPAIGN[ch.mission.index] || {}).name || ('Mission ' + (ch.mission.index + 1));
+    this.el.innerHTML = `
+      <div class="screen">
+        <div class="title-block">
+          <div class="game-sub" style="color:var(--ink)">Daily Challenge</div>
+          <div class="game-tag">${ch.label} · the same seed and modifiers for everyone today. Chase a high score, then share your code.</div>
+        </div>
+        <div class="daily-cards">
+          <div class="daily-card">
+            <div class="dc-head">💀 Survival of the Day</div>
+            <div class="dc-muts">${mutChips(ch.survival.mutators)}</div>
+            <div class="dc-best">${bestLine('survival')}</div>
+            <button class="btn primary" data-act="play-surv">▶ Play</button>
+          </div>
+          <div class="daily-card">
+            <div class="dc-head">🎯 Mission of the Day</div>
+            <div class="dc-sub">${mName}</div>
+            <div class="dc-muts">${mutChips(ch.mission.mutators)}</div>
+            <div class="dc-best">${bestLine('mission')}</div>
+            <button class="btn primary" data-act="play-mission">▶ Play</button>
+          </div>
+        </div>
+        <div class="daily-compare">
+          <div class="daily-share-label">Got a friend's code? Paste it to see their result:</div>
+          <div class="coop-join-row">
+            <input class="coop-code-input" data-field="code" placeholder="WBL-D-…" maxlength="40" autocomplete="off" spellcheck="false" />
+            <button class="btn" data-act="compare">Compare</button>
+          </div>
+          <div class="daily-compare-out" data-out></div>
+        </div>
+        <div class="menu-footer"><button class="btn ghost" data-act="back">← Back</button></div>
+      </div>`;
+    this.el.querySelector('[data-act="play-surv"]').addEventListener('click', () => { this._click(); this.h.onDailySurvival && this.h.onDailySurvival(ch); });
+    this.el.querySelector('[data-act="play-mission"]').addEventListener('click', () => { this._click(); this.h.onDailyMission && this.h.onDailyMission(ch); });
+    const out = this.el.querySelector('[data-out]');
+    const codeIn = this.el.querySelector('[data-field="code"]');
+    const compare = () => {
+      const r = parseShareCode(codeIn.value);
+      if (!r) { out.textContent = 'That doesn’t look like a valid code.'; out.className = 'daily-compare-out bad'; return; }
+      const today = r.key === ch.key;
+      const modeName = r.mode === 'mission' ? 'Mission of the Day' : 'Survival of the Day';
+      const mine = loadDailyBest(r.key, r.mode);
+      const verdict = mine ? (mine.score >= r.score ? ` — you're ahead (${mine.score})!` : ` — they beat your ${mine.score}.`) : '';
+      out.innerHTML = `Friend scored <b>${r.score}</b> on the ${today ? "" : "(older) "}${modeName}${verdict}`;
+      out.className = 'daily-compare-out';
+    };
+    this.el.querySelector('[data-act="compare"]').addEventListener('click', () => { this._click(); compare(); });
+    codeIn.addEventListener('keydown', (e) => { if (e.code === 'Enter') { e.preventDefault(); compare(); } });
     this.el.querySelector('[data-act="back"]').addEventListener('click', () => { this._click(); this.showMain(); });
   }
 

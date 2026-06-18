@@ -95,8 +95,10 @@ export class Survival {
     this.wave = n; this.state = 'fighting';
     const g = this.game, ctx = g._ctx();
     this._live = [];
+    const cm = (g._mods && g._mods.enemyCount) || 1;            // mutators: Horde / Swarm
     for (const [type, count] of this._composition(n)) {
-      for (let i = 0; i < count; i++) this._live.push(this._spawnAt(g, ctx, type));
+      const c = Math.min(14, Math.max(1, Math.round(count * cm)));
+      for (let i = 0; i < c; i++) this._live.push(this._spawnAt(g, ctx, type));
     }
     const boss = n % 5 === 0;
     g.hud && g.hud.banner('WAVE ' + n, boss ? 'A mini-boss joins the fray!' : 'Incoming Wobble.', 1.6);
@@ -153,14 +155,21 @@ export class Survival {
     if (this.state === 'over') return;
     this.state = 'over';
     const g = this.game;
-    if (this.wave > this.best.wave) this.best.wave = this.wave;
-    if (this.score > this.best.score) this.best.score = this.score;
-    saveBest(this.best);
+    // a Daily run is its own scoreboard — don't fold its (mutated) score into the
+    // all-time Survival best.
+    if (!g._daily) {
+      if (this.wave > this.best.wave) this.best.wave = this.wave;
+      if (this.score > this.best.score) this.best.score = this.score;
+      saveBest(this.best);
+    }
     g._setPlayInput(false); g.input.exitLock();
     g.state = 'result';                       // stops the play loop (and the campaign fail path)
     g.audio && g.audio.sfx('lose');
     g.hud && g.hud.show(false);
     this.hudEl.classList.add('hidden');
+    // Daily Survival records the day's score + share code and uses the daily result
+    // screen (Replay re-runs the same seed); a normal run uses the local best card.
+    if (g._daily && g._recordDaily) { g._recordDaily(this.score); g._showDailyResult(false); return; }
     this._showOver();
   }
 

@@ -118,6 +118,11 @@ first run; if your org restricts that, set **Settings → Pages → Source** to
 - **Data-driven campaign** — an 8-mission arc authored as plain data (see
   `missions/schema.js`), with four difficulty tiers and automatic mid-mission
   checkpoints.
+- **Daily Challenge** — one seeded run per calendar day, the same for everyone:
+  a **Survival of the Day** and a rotating **Mission of the Day**, each with that
+  day's **mutators** (Glass Cannon, Horde Night, Moon Boots, Juggernauts…). Your
+  best score persists locally and a short share code lets a friend chase the same
+  seed — no server, no accounts. Mutators are also a reusable run-modifier system.
 - **Two-player co-op** — bring a friend through either **Survival** or the whole
   **Campaign**, over direct peer-to-peer (Trystero relays, or paste-the-code
   manual connect — no account, no server). Host-authoritative: one player runs

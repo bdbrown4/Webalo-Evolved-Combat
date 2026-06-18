@@ -1009,7 +1009,19 @@ export class Game {
 
   _updateGuestHud(dt, scoped) {
     const gp = this._guestNetState;
-    const hs = gp ? {
+    let hs;
+    if (this._guestGunner && this._vehGhost) {
+      // turret gunner: an IRIS readout (unlimited, no reload) in place of the
+      // suppressed handheld weapon; the centred crosshair is the turret's aim.
+      hs = {
+        shield: gp ? gp.shield : this.player.shield, shieldMax: gp ? gp.shieldMax : this.player.shieldMax,
+        health: gp ? gp.health : this.player.health, healthMax: gp ? gp.healthMax : this.player.healthMax,
+        weapon: 'IRIS TURRET', altName: null, stowed: null, reticle: 'dot',
+        ammo: '∞', reserve: '', reloading: false, noReserve: true,
+        grenades: gp ? gp.grenades : { frag: 0, goober: 0 }, grenadeType: gp ? gp.grenadeType : 'frag', cook: null,
+        dmgSfx: null, hitFlash: false, lowShield: false, scoped: false, scopeZoom: 0, driving: false,
+      };
+    } else hs = gp ? {
       shield: gp.shield, shieldMax: gp.shieldMax, health: gp.health, healthMax: gp.healthMax,
       weapon: gp.weapon, altName: gp.altName, stowed: null, reticle: gp.reticle,
       ammo: gp.ammo, reserve: gp.reserve, reloading: gp.reloading,

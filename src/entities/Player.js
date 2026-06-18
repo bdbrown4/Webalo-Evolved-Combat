@@ -174,7 +174,9 @@ export class Player {
       // skip _look/_move/_syncCamera (no real camera on a remote player anyway).
       this._regen(dt, ctx);
       if (this.weapon) this.weapon.update(dt);
-      this._combat(dt, input, ctx);
+      // co-op gunner: this player's Fire works the vehicle turret (resolved by the
+      // Vehicle), not their handheld weapon — so skip handheld combat while mounted.
+      if (!this._gunner) this._combat(dt, input, ctx);
       if (this.meleeCd > 0) this.meleeCd -= dt;
       if (this.lastHitFlash > 0) this.lastHitFlash -= dt;
       if (this.justFired > 0) this.justFired -= dt;

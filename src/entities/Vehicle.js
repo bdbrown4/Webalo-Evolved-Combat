@@ -28,7 +28,7 @@ export class Vehicle {
 
   forward() { return new THREE.Vector3(Math.sin(this.heading), 0, Math.cos(this.heading)); }
 
-  update(dt, input, ctx) {
+  update(dt, input, ctx, gunInput) {
     const throttle = (input.isDown('forward') ? 1 : 0) - (input.isDown('back') ? 1 : 0);
     const steer = (input.isDown('left') ? 1 : 0) - (input.isDown('right') ? 1 : 0);
 
@@ -79,48 +79,73 @@ export class Vehicle {
     this.camera.position.lerp(camPos, Math.min(1, dt * 6));
     this.camera.lookAt(this.pos.x + nf.x * 5, this.pos.y + 1.4, this.pos.z + nf.z * 5);
 
-    this._turret(dt, input, ctx, nf);
+    // turret gunner: solo, the driver also guns (gunInput omitted → use the driver
+    // input + on-screen reticle); in co-op the guest mans it (gunInput is the guest's
+    // networked input, aimed in world space from its reported look).
+    this._turret(dt, gunInput || input, ctx, nf, !gunInput);
   }
 
-  // IRIS's turret: move the reticle with look input, lock onto the nearest Wobble
-  // under it (in screen space), and auto-fire on a cooldown. Hitscan + tracer.
-  _turret(dt, input, ctx, nf) {
-    const SENS = 0.0026; // calmer turret aim
-    this.aim.x = Math.max(-0.92, Math.min(0.92, this.aim.x + input.mouseDX * SENS));
-    this.aim.y = Math.max(-0.92, Math.min(0.92, this.aim.y - input.mouseDY * SENS));
+  // IRIS's turret. Two aim modes feed one firing path:
+  //  • reticle (solo): nudge an on-screen reticle, lock the nearest Wobble under it.
+  //  • world-aim (co-op gunner): aim along the gunner's reported look direction, lock
+  //    the nearest Wobble inside a small angular cone of it.
+  // Either way: manual trigger (hold Fire / ADS), hitscan + tracer on a cooldown.
+  _turret(dt, input, ctx, nf, reticleMode) {
+    let best = null;
+    const origin = this.pos.clone().addScaledVector(nf, 0.6); origin.y += 2.0;
+    let endPoint;
 
-    this.camera.updateMatrixWorld();
-    let best = null, bestD = 0.17; // NDC pick radius
-    const tmp = new THREE.Vector3();
-    if (ctx.enemies) {
-      for (const e of ctx.enemies) {
-        if (e.dead || e.type === 'boss') continue;        // the boss is roadkill-immune and not a turret target
-        tmp.copy(e.aimPoint()).project(this.camera);
-        if (tmp.z > 1) continue;                          // behind the camera
-        const d = Math.hypot(tmp.x - this.aim.x, tmp.y - this.aim.y);
-        if (d < bestD) { bestD = d; best = e; }
+    if (reticleMode) {
+      const SENS = 0.0026; // calmer turret aim
+      this.aim.x = Math.max(-0.92, Math.min(0.92, this.aim.x + input.mouseDX * SENS));
+      this.aim.y = Math.max(-0.92, Math.min(0.92, this.aim.y - input.mouseDY * SENS));
+      this.camera.updateMatrixWorld();
+      let bestD = 0.17; // NDC pick radius
+      const tmp = new THREE.Vector3();
+      if (ctx.enemies) {
+        for (const e of ctx.enemies) {
+          if (e.dead || e.type === 'boss') continue;      // the boss is roadkill-immune
+          tmp.copy(e.aimPoint()).project(this.camera);
+          if (tmp.z > 1) continue;                        // behind the camera
+          const d = Math.hypot(tmp.x - this.aim.x, tmp.y - this.aim.y);
+          if (d < bestD) { bestD = d; best = e; }
+        }
       }
+      if (!best) {
+        const aimW = new THREE.Vector3(this.aim.x, this.aim.y, 0.5).unproject(this.camera);
+        const dir = aimW.sub(this.camera.position).normalize();
+        endPoint = origin.clone().addScaledVector(dir, 80);
+      }
+    } else {
+      // world-aim from the gunner's look (yaw/pitch reported over the network)
+      const pkt = input.latest || {};
+      const yaw = pkt.yaw || 0, pitch = pkt.pitch || 0;
+      const dir = new THREE.Vector3(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch));
+      let bestAng = 0.13;                                 // ~7.5° lock cone
+      const to = new THREE.Vector3();
+      if (ctx.enemies) {
+        for (const e of ctx.enemies) {
+          if (e.dead || e.type === 'boss') continue;
+          to.copy(e.aimPoint()).sub(origin);
+          if (to.dot(dir) <= 0) continue;                 // behind the gunner's facing
+          const ang = to.normalize().angleTo(dir);
+          if (ang < bestAng) { bestAng = ang; best = e; }
+        }
+      }
+      if (!best) endPoint = origin.clone().addScaledVector(dir, 80);
     }
     this.lockedTarget = best;
 
-    // Manual turret: you aim, you pull the trigger. Hold Fire (left) or ADS
-    // (right-click) — on mobile, the FIRE button. The reticle locks the Wobble
-    // under it; a shot hits the lock, or fires a tracer where you're pointing.
     this.fireCd -= dt;
     const shooting = input.isDown('fire') || input.isDown('ads');
     if (shooting && this.fireCd <= 0) {
       this.fireCd = 0.15;
-      const muzzle = this.pos.clone().addScaledVector(nf, 0.6); muzzle.y += 2.0;
-      if (best) {
-        ctx.spawnTracer && ctx.spawnTracer(muzzle, best.aimPoint());
-        best.takeDamage(34, { shieldMult: ctx.player ? ctx.player.shieldDmgMult : 1, source: this.pos }); // Goo-Eater perk
-        ctx.onHitmark && ctx.onHitmark();
-      } else {
-        const aimW = new THREE.Vector3(this.aim.x, this.aim.y, 0.5).unproject(this.camera);
-        const dir = aimW.sub(this.camera.position).normalize();
-        ctx.spawnTracer && ctx.spawnTracer(muzzle, muzzle.clone().addScaledVector(dir, 80));
-      }
-      ctx.audio && ctx.audio.sfx('rifle');
+      const end = best ? best.aimPoint() : endPoint;
+      if (best) best.takeDamage(34, { shieldMult: ctx.player ? ctx.player.shieldDmgMult : 1, source: this.pos }); // Goo-Eater perk
+      // one hook spawns the tracer, plays the report, marks a hit — and (in co-op)
+      // mirrors all three to the gunner, who fires the host's turret remotely.
+      if (ctx.onTurretFire) ctx.onTurretFire(origin, end, !!best);
+      else { ctx.spawnTracer && ctx.spawnTracer(origin, end); ctx.audio && ctx.audio.sfx('rifle'); if (best) ctx.onHitmark && ctx.onHitmark(); }
     }
   }
 }

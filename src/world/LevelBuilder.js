@@ -340,7 +340,8 @@ export class LevelBuilder {
       this.escapeTime = 42;       // beat the collapsing ring to the Vanguard
       this.physics.floorY = -300; // open the void: drive off the road and you fall
       ctx.onMountVehicle && ctx.onMountVehicle();
-      ctx.onBanner && ctx.onBanner('DRIVE', 'No guardrails, no time. Reach the Vanguard — Fire / right-click the turret.', 2.6);
+      // co-op declares per-role banners (driver vs gunner) from _mountVehicle; solo gets the generic one
+      if (!(ctx._g && ctx._g.coopRole)) ctx.onBanner && ctx.onBanner('DRIVE', 'No guardrails, no time. Reach the Vanguard — Fire / right-click the turret.', 2.6);
     }
     ctx.audio && ctx.audio.sfx('objective');
   }

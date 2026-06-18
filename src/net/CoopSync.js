@@ -202,6 +202,9 @@ export function interpolateGhosts(game, dt) {
   }
   const a = game._hostAvatar;
   if (a && a._buf && a._buf.length) { const s = sampleAt(a._buf, rt); a.position.set(s.x, s.y, s.z); a.rotation.y = s.f; }
+  // co-op gunner: the vehicle the guest rides follows the host's synced transform
+  // (while driving, the host's player position IS the vehicle's).
+  if (game._vehGhost && a) { game._vehGhost.mesh.position.copy(a.position); game._vehGhost.mesh.rotation.y = a.rotation.y; }
 }
 
 function applyEvent(game, ev) {
@@ -212,7 +215,16 @@ function applyEvent(game, ev) {
   else if (k === 'expl') game._spawnExplosion(new THREE.Vector3(ev[1], ev[2], ev[3]), ev[4]);
   else if (k === 'sfx') game.audio && game.audio.sfx(ev[1]);
   else if (k === 'kill') game.hud && game.hud.killFeed(ev[1], ev[2]);
+  else if (k === 'esc') game.hud && game.hud.setEscape(ev[1]);
   else if (k === 'coopover') game._showCoopOver(ev[1], ev[2], false);
+  else if (k === 'mcomplete') game._guestMissionComplete(ev[1]);
+  else if (k === 'coopfail') game._showCoopFail(false);
+  else if (k === 'mountveh') game._guestEnterGunner(ev[1]);
+  else if (k === 'vfire') {                                    // co-op turret: the guest's own shot
+    game._spawnTracer(new THREE.Vector3(ev[1], ev[2], ev[3]), new THREE.Vector3(ev[4], ev[5], ev[6]));
+    game.audio && game.audio.sfx('rifle');
+    if (ev[7] && game.hud) game.hud.hitMark();
+  }
 }
 
 export function clearGhosts(game) {

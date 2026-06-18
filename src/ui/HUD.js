@@ -135,6 +135,12 @@ export class HUD {
     this.$('#w-name').textContent = state.weapon;
     this.$('#ammo-cur').textContent = state.ammo;
     this.$('#ammo-res').textContent = state.reserve;
+    // turret/unlimited readouts (e.g. the co-op gunner) hide the "/reserve" tail
+    // and the grenade line (the gunner can't reload or throw while mounted)
+    const resTail = this.$('#ammo-box').querySelector('.reserve');
+    if (resTail) resTail.style.display = state.noReserve ? 'none' : '';
+    const nades = this.$('#ammo-box').querySelector('.nades');
+    if (nades) nades.style.display = state.noReserve ? 'none' : '';
     this.$('#nade-type').textContent = state.grenadeType.toUpperCase();
     this.$('#nade-count').textContent = 'x' + state.grenades[state.grenadeType];
     this.$('#ammo-box').classList.toggle('reloading', state.reloading);

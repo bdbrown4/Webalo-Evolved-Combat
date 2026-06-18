@@ -66,7 +66,7 @@ export class Menus {
     this.el.querySelectorAll('[data-act]').forEach((b) => b.addEventListener('click', () => {
       this._click();
       const a = b.dataset.act;
-      if (a === 'new') this.showIntro(() => this.h.onStart(0));
+      if (a === 'new') this.showCampaignStart();
       else if (a === 'continue') this.h.onStart(loadProgress().unlocked);
       else if (a === 'tutorial') this.h.onTutorial && this.h.onTutorial();
       else if (a === 'survival') this.showSurvival();
@@ -74,6 +74,41 @@ export class Menus {
       else if (a === 'settings') this.showSettings('controls', () => this.showMain());
       else if (a === 'credits') this.showCredits();
     }));
+  }
+
+  // ---------------- New Campaign: solo or co-op ----------------
+  // Mirrors the Survival screen — Play Solo runs the story as usual; Host/Join brings
+  // a second player along for the whole campaign (the host leads, the guest follows).
+  showCampaignStart() {
+    this.clear();
+    this.screen = 'campaign-start';
+    this.el.innerHTML = `
+      <div class="screen">
+        <div class="title-block">
+          <div class="game-sub" style="color:var(--ink)">New Campaign</div>
+          <div class="game-tag">Sgt. Orion vs. the Wobble Coalition — play the story solo, or bring one friend.</div>
+        </div>
+        <div class="menu-list">
+          <button class="btn primary" data-act="solo">▶ Play Solo</button>
+          <div class="coop-divider">— or team up · 2 players —</div>
+          <button class="btn" data-act="host">🛰 Host Co-op</button>
+          <div class="coop-join-row">
+            <input class="coop-code-input" data-field="code" placeholder="Enter a friend's code · e.g. WBL-AB3KD" maxlength="12" autocomplete="off" spellcheck="false" />
+            <button class="btn" data-act="join">Join</button>
+          </div>
+          <button class="btn ghost" data-act="manual">⌥ Manual connect (no relays)</button>
+          <button class="btn ghost" data-act="back">← Back</button>
+        </div>
+        <div class="menu-footer">Co-op plays the whole campaign together — the host leads mission to mission, the guest follows. Direct peer-to-peer; no account, no server. Co-op progress isn't saved to your solo campaign.</div>
+      </div>`;
+    const code = this.el.querySelector('[data-field="code"]');
+    const doJoin = () => { const c = (code.value || '').trim().toUpperCase(); if (c) { this._click(); this.h.onCoopJoin && this.h.onCoopJoin(c, 'campaign'); } };
+    this.el.querySelector('[data-act="solo"]').addEventListener('click', () => { this._click(); this.showIntro(() => this.h.onStart(0)); });
+    this.el.querySelector('[data-act="host"]').addEventListener('click', () => { this._click(); this.h.onCoopHost && this.h.onCoopHost('campaign'); });
+    this.el.querySelector('[data-act="join"]').addEventListener('click', doJoin);
+    code.addEventListener('keydown', (e) => { if (e.code === 'Enter') { e.preventDefault(); doJoin(); } });
+    this.el.querySelector('[data-act="manual"]').addEventListener('click', () => { this._click(); this.showCoopManual('campaign'); });
+    this.el.querySelector('[data-act="back"]').addEventListener('click', () => { this._click(); this.showMain(); });
   }
 
   // ---------------- Opening crawl ----------------
@@ -221,16 +256,16 @@ export class Menus {
         <div class="menu-footer">Co-op is direct peer-to-peer — no account, no server. Host shares the code; the other player picks <b>Join</b> and enters it.</div>
       </div>`;
     const code = this.el.querySelector('[data-field="code"]');
-    const doJoin = () => { const c = (code.value || '').trim().toUpperCase(); if (c) { this._click(); this.h.onCoopJoin && this.h.onCoopJoin(c); } };
+    const doJoin = () => { const c = (code.value || '').trim().toUpperCase(); if (c) { this._click(); this.h.onCoopJoin && this.h.onCoopJoin(c, 'survival'); } };
     this.el.querySelector('[data-act="solo"]').addEventListener('click', () => { this._click(); this.h.onSurvival && this.h.onSurvival(); });
-    this.el.querySelector('[data-act="host"]').addEventListener('click', () => { this._click(); this.h.onCoopHost && this.h.onCoopHost(); });
+    this.el.querySelector('[data-act="host"]').addEventListener('click', () => { this._click(); this.h.onCoopHost && this.h.onCoopHost('survival'); });
     this.el.querySelector('[data-act="join"]').addEventListener('click', doJoin);
     code.addEventListener('keydown', (e) => { if (e.code === 'Enter') { e.preventDefault(); doJoin(); } });
-    this.el.querySelector('[data-act="manual"]').addEventListener('click', () => { this._click(); this.showCoopManual(); });
+    this.el.querySelector('[data-act="manual"]').addEventListener('click', () => { this._click(); this.showCoopManual('survival'); });
     this.el.querySelector('[data-act="back"]').addEventListener('click', () => { this._click(); this.showMain(); });
   }
 
-  showCoopManual() {
+  showCoopManual(mode = 'survival') {
     this.clear();
     this.screen = 'coop-manual';
     this.el.innerHTML = `
@@ -245,9 +280,9 @@ export class Menus {
           <button class="btn ghost" data-act="back">← Back</button>
         </div>
       </div>`;
-    this.el.querySelector('[data-act="host"]').addEventListener('click', () => { this._click(); this.h.onCoopHostManual && this.h.onCoopHostManual(); });
-    this.el.querySelector('[data-act="join"]').addEventListener('click', () => { this._click(); this.h.onCoopJoinManual && this.h.onCoopJoinManual(); });
-    this.el.querySelector('[data-act="back"]').addEventListener('click', () => { this._click(); this.showSurvival(); });
+    this.el.querySelector('[data-act="host"]').addEventListener('click', () => { this._click(); this.h.onCoopHostManual && this.h.onCoopHostManual(mode); });
+    this.el.querySelector('[data-act="join"]').addEventListener('click', () => { this._click(); this.h.onCoopJoinManual && this.h.onCoopJoinManual(mode); });
+    this.el.querySelector('[data-act="back"]').addEventListener('click', () => { this._click(); if (mode === 'campaign') this.showCampaignStart(); else this.showSurvival(); });
   }
 
   // ---------------- Mission select ----------------

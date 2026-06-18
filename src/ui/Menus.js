@@ -56,6 +56,7 @@ export class Menus {
           <button class="btn" data-act="tutorial">🎓 Tutorial</button>
           <button class="btn" data-act="survival">💀 Survival</button>
           <button class="btn" data-act="daily">📅 Daily Challenge</button>
+          <button class="btn" data-act="pvp">⚔ Deathmatch (PvP)</button>
           <button class="btn" data-act="select">☰ Mission Select</button>
           <button class="btn" data-act="settings">⚙ Settings</button>
           <button class="btn ghost" data-act="credits">ℹ Credits</button>
@@ -74,6 +75,7 @@ export class Menus {
       else if (a === 'tutorial') this.h.onTutorial && this.h.onTutorial();
       else if (a === 'survival') this.showSurvival();
       else if (a === 'daily') this.showDaily();
+      else if (a === 'pvp') this.showPvp();
       else if (a === 'select') this.showMissionSelect();
       else if (a === 'settings') this.showSettings('controls', () => this.showMain());
       else if (a === 'credits') this.showCredits();
@@ -112,6 +114,44 @@ export class Menus {
     this.el.querySelector('[data-act="join"]').addEventListener('click', doJoin);
     code.addEventListener('keydown', (e) => { if (e.code === 'Enter') { e.preventDefault(); doJoin(); } });
     this.el.querySelector('[data-act="manual"]').addEventListener('click', () => { this._click(); this.showCoopManual('campaign'); });
+    this.el.querySelector('[data-act="back"]').addEventListener('click', () => { this._click(); this.showMain(); });
+  }
+
+  // ---------------- Deathmatch (PvP) ----------------
+  // 1v1 over the same peer-to-peer transport as co-op. Host sets the frag limit and
+  // shares a code; the rival joins. (FFA / teams are a planned follow-up.)
+  showPvp() {
+    this.clear();
+    this.screen = 'pvp';
+    this._pvpFrag = this._pvpFrag || 15;
+    this.el.innerHTML = `
+      <div class="screen">
+        <div class="title-block">
+          <div class="game-sub" style="color:var(--ink)">Deathmatch</div>
+          <div class="game-tag">1v1, last marine standing scores. Same direct peer-to-peer link as co-op — no server.</div>
+        </div>
+        <div class="menu-list">
+          <div class="setting-row" style="justify-content:center;gap:14px;border:0">
+            <label>Frag limit</label>
+            <button class="btn ghost" data-act="frag" style="display:inline-block;padding:7px 16px">${this._pvpFrag}</button>
+          </div>
+          <button class="btn primary" data-act="host">🛰 Host Match</button>
+          <div class="coop-join-row">
+            <input class="coop-code-input" data-field="code" placeholder="Enter a rival's code · e.g. WBL-AB3KD" maxlength="12" autocomplete="off" spellcheck="false" />
+            <button class="btn" data-act="join">Join</button>
+          </div>
+          <button class="btn ghost" data-act="back">← Back</button>
+        </div>
+        <div class="menu-footer">Host picks the frag limit and shares the code; the rival picks <b>Join</b>. FFA &amp; 2v2 teams are on the way.</div>
+      </div>`;
+    const fragBtn = this.el.querySelector('[data-act="frag"]');
+    const fragOpts = [10, 15, 20, 30];
+    fragBtn.addEventListener('click', () => { this._click(); this._pvpFrag = fragOpts[(fragOpts.indexOf(this._pvpFrag) + 1) % fragOpts.length]; fragBtn.textContent = this._pvpFrag; });
+    const code = this.el.querySelector('[data-field="code"]');
+    const doJoin = () => { const c = (code.value || '').trim().toUpperCase(); if (c) { this._click(); this.h.onPvpJoin && this.h.onPvpJoin(c); } };
+    this.el.querySelector('[data-act="host"]').addEventListener('click', () => { this._click(); this.h.onPvpHost && this.h.onPvpHost({ fragLimit: this._pvpFrag }); });
+    this.el.querySelector('[data-act="join"]').addEventListener('click', doJoin);
+    code.addEventListener('keydown', (e) => { if (e.code === 'Enter') { e.preventDefault(); doJoin(); } });
     this.el.querySelector('[data-act="back"]').addEventListener('click', () => { this._click(); this.showMain(); });
   }
 

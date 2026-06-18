@@ -112,6 +112,7 @@ export function serializeSnapshot(game) {
     hp: local ? [r2(local.pos.x), r2(local.pos.y), r2(local.pos.z), r3(local.yaw), Math.round(local.health), Math.round(local.shield), pstate(local), Math.ceil(local.bleedT), r2(local.reviveProg)] : null,
     gp: guest ? guestState(guest) : null,
     sv: sv ? [sv.wave, sv.score, sv.state, sv._live ? sv._live.filter((x) => !x.dead).length : 0] : null,
+    pvp: game._pvp ? [local ? (local._frags || 0) : 0, guest ? (guest._frags || 0) : 0, game._pvp.over ? 1 : 0] : null,
     ev: game._netEvents.length ? game._netEvents.splice(0) : null,
   };
 }
@@ -126,6 +127,7 @@ function guestState(g) {
   return {
     health: Math.round(g.health), healthMax: g.healthMax, shield: Math.round(g.shield), shieldMax: g.shieldMax, dead: g.dead ? 1 : 0,
     downed: g.downed ? 1 : 0, bleedT: Math.ceil(g.bleedT), reviveProg: r2(g.reviveProg),
+    respawnT: g._respawnT != null ? Math.ceil(g._respawnT) : 0,
     weapon: w ? w.name : '—', altName: w && w.def.alt ? w.def.alt.name : null, reticle: w ? w.def.reticle : 'dot',
     ammo: w ? w.ammo : 0, reserve: w ? w.reserve : 0, reloading: w ? w.reloading > 0 : false,
     grenades: g.grenades, grenadeType: g.grenadeType,
@@ -185,6 +187,7 @@ export function applySnapshot(game, snap) {
     if (game.player) { game.player.downed = !!snap.gp.downed; game.player.dead = !!snap.gp.dead; }
   }
   if (snap.sv) game._svNetState = snap.sv;
+  if (snap.pvp) game._pvpNetState = snap.pvp;
 
   // one-shot events (banners, telegraphs, explosions…)
   if (snap.ev) for (const ev of snap.ev) applyEvent(game, ev);
@@ -219,6 +222,8 @@ function applyEvent(game, ev) {
   else if (k === 'coopover') game._showCoopOver(ev[1], ev[2], false);
   else if (k === 'mcomplete') game._guestMissionComplete(ev[1]);
   else if (k === 'coopfail') game._showCoopFail(false);
+  else if (k === 'frag') game.hud && game.hud.killFeed((ev[1] || '—') + ' ▸ ' + ev[2], ev[1] === '☠' ? 0x9aa7b3 : 0xff6a3d);
+  else if (k === 'pvpover') game._guestPvpOver(ev[1], ev[2], ev[3]);
   else if (k === 'mountveh') game._guestEnterGunner(ev[1]);
   else if (k === 'vfire') {                                    // co-op turret: the guest's own shot
     game._spawnTracer(new THREE.Vector3(ev[1], ev[2], ev[3]), new THREE.Vector3(ev[4], ev[5], ev[6]));

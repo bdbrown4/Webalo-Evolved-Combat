@@ -798,3 +798,15 @@ html.touch .crawl-skip { padding: 12px 22px; font-size: 15px; }
   font-family: ui-monospace, monospace; font-size: 15px; letter-spacing: 1px; color: var(--hud-amber);
   background: rgba(10,22,30,0.95); border: 1px solid var(--panel-edge); border-radius: 8px; padding: 8px 14px;
 }
+
+/* ---------- PvP Deathmatch HUD ---------- */
+.pvp-hud {
+  position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
+  z-index: 22; pointer-events: none; text-align: center; font-variant-numeric: tabular-nums;
+}
+.pvp-score { font-size: 30px; font-weight: 800; letter-spacing: 2px; color: var(--ink); text-shadow: 0 2px 8px rgba(0,0,0,0.6); }
+.pvp-score .pvp-me { color: var(--hud-amber); }
+.pvp-score .pvp-foe { color: #ff6a4a; }
+.pvp-score .pvp-sep { opacity: 0.5; margin: 0 10px; }
+.pvp-limit { font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--ink-dim); margin-top: 2px; }
+.pvp-respawn { margin-top: 8px; font-size: 15px; font-weight: 700; letter-spacing: 2px; color: #ff6a4a; }

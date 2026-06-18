@@ -84,6 +84,7 @@ export class Game {
     this.players = [];          // all players in the world; [local] solo, [local, remote…] in co-op
     this.net = null; this.coopRole = null;   // 'host' | 'guest' while a co-op session is live
     this._coopMode = 'survival';             // 'survival' | 'campaign' — what a co-op session plays
+    this._pvp = null;                        // { fragLimit, over } while a Deathmatch is live
     this._guestRunPerks = [];                // co-op campaign: guest's chosen perks (host applies on rebuild)
     this._pendingGuestPerk = null;           // a perk the guest picked, awaiting the host's next advance
     this._hostPendingPerk = null;            // the host's pick on the current mission-complete screen
@@ -382,6 +383,7 @@ export class Game {
     this.players = [];
     clearGhosts(this);
     this._clearVehGhost();
+    this._pvp = null; this._pvpNetState = null; this._clearPvpHud();
     this._clearCoopHud();
     if (this._hostAvatar) { this.scene.remove(this._hostAvatar); this._hostAvatar = null; }
     if (this._svHudEl) { this._svHudEl.remove(); this._svHudEl = null; }
@@ -410,6 +412,8 @@ export class Game {
         // The living player nearest a world point — how enemies/projectiles pick a
         // co-op target. Solo, this is always the one player (or null if downed).
         nearestPlayer: (pos) => { let best = null, bd = Infinity; for (const pl of this.players) { if (!pl || pl.dead || pl.downed) continue; const d = pl.pos.distanceToSquared(pos); if (d < bd) { bd = d; best = pl; } } return best; },
+        // who a shooter may hit: enemies in PvE, or the opposing player(s) in PvP.
+        combatTargets: (shooter) => this._combatTargets(shooter),
         _g: this,
         spawnEnemy: (type, pos) => { const e = new Enemy(type, pos); this._scaleEnemy(e); this.enemies.push(e); this.scene.add(e.mesh); return e; },
         requestSpawn: (type, n, near) => { const cap = 28; for (let i = 0; i < n && this.enemies.filter((x) => !x.dead).length < cap; i++) { const p = near.clone().add(new THREE.Vector3((Math.random() - 0.5) * 6, 0, (Math.random() - 0.5) * 6)); const e = new Enemy(type, p); this._scaleEnemy(e); this.enemies.push(e); this.scene.add(e.mesh); if (this.level) { const r = this.level.segments[this.level.activeIndex]; if (r) r.enemies.push(e); } } },
@@ -492,7 +496,7 @@ export class Game {
   }
   quitToMenu() {
     // null the role/net BEFORE closing so our own close doesn't read as "partner left"
-    const net = this.net; this.net = null; this.coopRole = null; this._levelSeed = undefined; this._coopLeft = false; this._coopOver = false; this._daily = null;
+    const net = this.net; this.net = null; this.coopRole = null; this._levelSeed = undefined; this._coopLeft = false; this._coopOver = false; this._daily = null; this._pvp = null;
     if (net) { try { net.close(); } catch (e) { /* already gone */ } }
     if (this._pendingNet) { try { this._pendingNet.close(); } catch (e) { /* gone */ } this._pendingNet = null; }
     this._clearCoopOverlay();
@@ -847,9 +851,10 @@ export class Game {
     this.hud.show(false);
     if (this.survival && this.survival.hudEl) this.survival.hudEl.classList.add('hidden');
     if (this._svHudEl) this._svHudEl.style.display = 'none';
+    if (this._pvpHud) this._pvpHud.style.display = 'none';
     this._clearCoopHud();
     const el = this._showCoopOverlay(`
-      <div class="coop-title">Partner Disconnected</div>
+      <div class="coop-title">${this._pvp ? 'Rival' : 'Partner'} Disconnected</div>
       <div class="coop-sub" style="text-align:center">Your co-op partner left the session.</div>
       <button class="btn ghost" data-act="leave">⏏ Leave to Menu</button>`);
     el.querySelector('[data-act="leave"]').addEventListener('click', () => this.quitToMenu());
@@ -1025,12 +1030,21 @@ export class Game {
     if (scoped !== this._scoped) { this._scoped = scoped; this.audio.sfx(scoped ? 'scopein' : 'scopeout'); }
 
     interpolateGhosts(this, dt);   // update ghost/host-avatar/vehicle positions before we ride them
+    // PvP: the host owns our life. While dead we freeze (respawn overlay); on the
+    // dead→alive edge we snap to our spawn (the host has already moved us there).
+    const gp = this._guestNetState;
+    const pvpDead = !!(this._pvp && gp && gp.dead);
+    if (this._pvp && this._wasPvpDead && !pvpDead && this._mySpawn) { this.player.pos.copy(this._mySpawn); this.player.vel.set(0, 0, 0); this.player.yaw = this._mySpawn.yaw || 0; }
+    this._wasPvpDead = pvpDead;
     if (gunner) {
       // turret seat: position comes from the host's synced transform (the vehicle
       // ghost); we just free-look to aim and forward Fire — the host's turret shoots.
       this.player.driving = true;
       this.player._look(this.input, this.settings);
       this.player.pos.copy(this._vehGhost.mesh.position);
+      this.player._syncCamera(this.settings, dt);
+    } else if (pvpDead) {
+      this.player._look(this.input, this.settings);   // spectate-look while dead, no move
       this.player._syncCamera(this.settings, dt);
     } else {
       this.player.driving = false;
@@ -1047,7 +1061,7 @@ export class Game {
     }
 
     this._updateGuestHud(dt, scoped);
-    this._updateCoopHud();
+    if (this._pvp) this._updatePvpHud(); else this._updateCoopHud();
     if (this.aureole) this.aureole.rotation.z += dt * 0.01;
     this.input.endFrame();
   }
@@ -1187,6 +1201,227 @@ export class Game {
   _clearVehGhost() {
     if (this._vehGhost) { this.scene.remove(this._vehGhost.mesh); this._vehGhost = null; }
     this._guestGunner = false;
+  }
+
+  // ---------- PvP: Deathmatch (host-authoritative, reuses the co-op transport) ----------
+  // Who a shooter may damage: enemies in PvE; the opposing player(s) in PvP (never
+  // self or a teammate). Used by hitscan, projectiles, splash and aim-assist.
+  _combatTargets(shooter) {
+    if (!this._pvp) return this.enemies;
+    const out = [];
+    for (const p of this.players) {
+      if (!p || p === shooter || p.dead || p.downed) continue;
+      if (this._pvp.teams && shooter && p._team != null && p._team === shooter._team) continue;
+      out.push(p);
+    }
+    return out;
+  }
+
+  // Two opposing spawns at the ends of the arena (faces drawn toward centre).
+  _pvpSpawns() {
+    const r = (this.level && this.level.segments[0]) || { cx: 0, cz: 0, d: 40 };
+    const a = new THREE.Vector3(r.cx, 1.2, r.cz - r.d * 0.33); a.yaw = 0;          // looks +Z
+    const b = new THREE.Vector3(r.cx, 1.2, r.cz + r.d * 0.33); b.yaw = Math.PI;    // looks -Z
+    return [a, b];
+  }
+
+  // HOST: wire the one-time net handlers, then build the first round.
+  startPvpHost(net, opts = {}) {
+    this.net = net; this.coopRole = 'host';
+    this._pvpConfig = { fragLimit: opts.fragLimit || 15 };
+    this._coopOver = false; this._coopLeft = false;
+    net.on('input', (pkt) => { if (this._guestPlayer && this._guestPlayer._netInput) this._guestPlayer._netInput.feed(pkt); });
+    net.on('rematchReq', () => { if (this._pvp && this._pvp.over) this._pvpBuild(); });
+    net.onState((s) => { if (s === 'closed') this._onPeerLeft(); });
+    this._pvpBuild();
+  }
+
+  // HOST: (re)build the arena under a shared seed, drop both players at opposite ends,
+  // and ship 'start'. Reused for the initial round and a rematch. _pvp is set AFTER
+  // _beginMission (whose teardown clears it), so it can never leak into a later run.
+  _pvpBuild() {
+    this._coopOver = false; this._coopLeft = false;
+    this._setRunMods([]); this._daily = null; this._resume = false;
+    this._levelSeed = (Date.now() & 0x7fffffff) || 1;
+    this._beginMission(SURVIVAL_MISSION);
+    this.level.freeplay = true;
+    this._pvp = { fragLimit: this._pvpConfig.fragLimit, over: false };
+    const sp = this._pvpSpawns();
+    this._pvpArm(this.player, sp[0], 0, 'You');
+    this.player._syncCamera(this.settings, 0);
+    const guest = this.addRemotePlayer(sp[1], { color: 0xffb454, id: 'guest', weapons: ['rifle', 'pistol'] });
+    guest._netInput = new NetInputProxy();
+    this._pvpArm(guest, sp[1], 1, 'Rival');
+    this._guestPlayer = guest;
+    this.net.send('start', { seed: this._levelSeed, mode: 'pvp', fragLimit: this._pvp.fragLimit,
+      spawn: { x: sp[1].x, y: sp[1].y, z: sp[1].z, yaw: sp[1].yaw } });
+    this._ensurePvpHud();
+    this.hud.banner('DEATHMATCH', `First to ${this._pvp.fragLimit} frags wins.`, 2.6);
+  }
+
+  // Configure a player as a PvP combatant: a fixed spawn, a team/name, fresh score,
+  // and "dies, not downs" rules.
+  _pvpArm(p, spawn, team, name) {
+    p.pos.copy(spawn); p.yaw = spawn.yaw || 0; p.vel.set(0, 0, 0);
+    p.downable = false; p.dead = false; p.downed = false;
+    p.health = p.healthMax; p.shield = p.shieldMax; p.regenT = 0;
+    p._team = team; p._pvpName = name; p._frags = 0; p._spawn = spawn;
+    p._respawnT = null; p._pvpDeadHandled = false; p.lastAttacker = null;
+    if (p._avatar) p._avatar.visible = true;
+  }
+
+  _pvpRespawn(p) {
+    p.dead = false; p.downed = false; p.health = p.healthMax; p.shield = p.shieldMax; p.regenT = 0;
+    p.pos.copy(p._spawn); p.vel.set(0, 0, 0); p.yaw = p._spawn.yaw || 0; p.lastAttacker = null;
+    if (p === this.player) this.player._syncCamera(this.settings, 0);
+    if (p._avatar) p._avatar.visible = true;
+  }
+
+  // HOST: deaths → frags → respawns → win. Runs each frame while a match is live.
+  _pvpUpdate(dt) {
+    if (!this._pvp) return;
+    for (const p of this.players) {
+      if (p.dead && !p._pvpDeadHandled) {
+        p._pvpDeadHandled = true; p._respawnT = 3.0;
+        if (p._avatar) p._avatar.visible = false;
+        const killer = p.lastAttacker;
+        const selfKill = !killer || killer === p;
+        if (!selfKill) killer._frags = (killer._frags || 0) + 1;
+        const kName = selfKill ? '☠' : killer._pvpName;
+        this.hud.killFeed(`${kName} ▸ ${p._pvpName}`, selfKill ? 0x9aa7b3 : 0xff6a3d);
+        this._netPush('frag', kName, p._pvpName);
+        if (!selfKill && killer._frags >= this._pvp.fragLimit) { this._pvpEnd(killer); return; }
+      }
+      if (p.dead && p._respawnT != null) {
+        p._respawnT -= dt;
+        if (p._respawnT <= 0 && !this._pvp.over) { p._respawnT = null; p._pvpDeadHandled = false; this._pvpRespawn(p); }
+      }
+    }
+  }
+
+  _pvpEnd(winner) {
+    this._pvp.over = true;
+    const meWon = winner === this.player;
+    const hF = this.player._frags || 0, gF = (this._guestPlayer && this._guestPlayer._frags) || 0;
+    this._netPush('pvpover', winner._pvpName, hF, gF);
+    if (this.net) this.net.send('snap', serializeSnapshot(this));   // flush the result now
+    this._showPvpOver(meWon ? 'Victory' : 'Defeat', winner._pvpName, hF, gF);   // host: me=host frags
+  }
+
+  // GUEST: register handlers; the arena is built when the host's 'start' arrives.
+  joinPvp(net) {
+    this.net = net; this.coopRole = 'guest';
+    this._coopOver = false; this._coopLeft = false;
+    net.on('start', (d) => this._beginPvpGuest(d));
+    net.on('snap', (snap) => { this._lastSnap = snap; applySnapshot(this, snap); });
+    net.onState((s) => { if (s === 'closed') this._onPeerLeft(); });
+  }
+
+  _beginPvpGuest(d) {
+    this._netClock = 0;
+    this._levelSeed = d.seed;
+    this._setRunMods([]); this._daily = null; this._resume = false; this._runPerks = [];
+    this._beginMission(SURVIVAL_MISSION);      // teardown clears any prior _pvp
+    this.level.freeplay = true;
+    this._pvp = { fragLimit: d.fragLimit || 15, over: false };
+    this.player.downable = false;
+    if (d.spawn) { this._mySpawn = new THREE.Vector3(d.spawn.x, d.spawn.y, d.spawn.z); this._mySpawn.yaw = d.spawn.yaw || Math.PI;
+      this.player.pos.copy(this._mySpawn); this.player.yaw = this._mySpawn.yaw; this.player._syncCamera(this.settings, 0); }
+    this._hostAvatar = this._makeBuddyAvatar(0xff6a4a);            // the rival, drawn from snapshots
+    this.scene.add(this._hostAvatar);
+    this._wasPvpDead = false;
+    this._ensurePvpHud();
+    this._clearCoopOverlay(); this._clearResult();
+    this.hud.banner('DEATHMATCH', `First to ${this._pvp.fragLimit} frags wins.`, 2.6);
+  }
+
+  // ---------- PvP: lobby / HUD / end ----------
+  pvpHost(opts) {
+    const code = makeRoomCode();
+    const net = hostTrystero(code); this._pendingNet = net;
+    this._pvpOpts = opts || { fragLimit: 15 };
+    const el = this._showCoopOverlay(`
+      <div class="coop-title">Hosting Deathmatch</div>
+      <div class="coop-sub">Send this code — your rival opens <b>Deathmatch</b> and picks <b>Join</b>:</div>
+      <div class="coop-code">${code}</div>
+      <button class="btn" data-act="copy">⧉ Copy Code</button>
+      <div class="coop-sub" style="margin-top:8px">First to <b>${this._pvpOpts.fragLimit}</b> frags.</div>
+      <div class="coop-wait"><span class="coop-spinner"></span><span class="coop-status">Waiting for a rival to join…</span></div>
+      <button class="btn ghost" data-act="cancel">Cancel</button>`);
+    const copyBtn = el.querySelector('[data-act="copy"]');
+    copyBtn.addEventListener('click', () => { try { navigator.clipboard.writeText(code); copyBtn.textContent = '✓ Copied'; setTimeout(() => { copyBtn.textContent = '⧉ Copy Code'; }, 1200); } catch (e) {} });
+    el.querySelector('[data-act="cancel"]').addEventListener('click', () => this._coopCancel(net));
+    net.onState((s) => {
+      if (s === 'connected' && this.coopRole !== 'host') {
+        this._coopSetStatus(el, 'Rival connected! Launching…', true);
+        this._coopLaunchTimer = setTimeout(() => { this._pendingNet = null; this._clearCoopOverlay(); this.startPvpHost(net, this._pvpOpts); }, 700);
+      }
+    });
+  }
+  pvpJoin(code) {
+    const net = joinTrystero(code); this._pendingNet = net;
+    const el = this._showCoopOverlay(`
+      <div class="coop-title">Joining ${code}</div>
+      <div class="coop-wait"><span class="coop-spinner"></span><span class="coop-status">Reaching the host…</span></div>
+      <div class="coop-dim">Peer-to-peer can take a few seconds to link up.</div>
+      <button class="btn ghost" data-act="cancel">Cancel</button>`);
+    el.querySelector('[data-act="cancel"]').addEventListener('click', () => this._coopCancel(net));
+    this.joinPvp(net);
+    this._coopReassure = setTimeout(() => this._coopSetStatus(el, 'Still linking… hang tight (relays can be slow).'), 5000);
+    this._coopFailTimer = setTimeout(() => { if (!this.level) this._coopFail(el, net, 'Couldn’t reach the host. Double-check the code and that they’re still hosting.'); }, 25000);
+    net.onState((s) => { if (s === 'connected') this._coopSetStatus(el, 'Connected! Starting…', true); });
+  }
+
+  _ensurePvpHud() {
+    if (this._pvpHud) return;
+    const el = document.createElement('div');
+    el.className = 'pvp-hud';
+    el.innerHTML = '<div class="pvp-score"><span class="pvp-me">0</span><span class="pvp-sep">—</span><span class="pvp-foe">0</span></div><div class="pvp-limit"></div><div class="pvp-respawn"></div>';
+    this.root.appendChild(el);
+    this._pvpHud = el;
+  }
+  _clearPvpHud() { if (this._pvpHud) { this._pvpHud.remove(); this._pvpHud = null; } }
+
+  _updatePvpHud() {
+    if (!this._pvp || this.state !== 'playing') { if (this._pvpHud) this._pvpHud.style.display = 'none'; return; }
+    this._ensurePvpHud(); this._pvpHud.style.display = '';
+    let me = 0, foe = 0, respawn = 0;
+    if (this.coopRole === 'host') {
+      me = this.player._frags || 0; foe = (this._guestPlayer && this._guestPlayer._frags) || 0;
+      respawn = this.player._respawnT != null ? Math.ceil(this.player._respawnT) : 0;
+    } else {
+      const s = this._pvpNetState; const gp = this._guestNetState;
+      if (s) { me = s[1]; foe = s[0]; }
+      respawn = gp && gp.respawnT ? gp.respawnT : 0;
+    }
+    this._pvpHud.querySelector('.pvp-me').textContent = me;
+    this._pvpHud.querySelector('.pvp-foe').textContent = foe;
+    this._pvpHud.querySelector('.pvp-limit').textContent = 'first to ' + this._pvp.fragLimit;
+    this._pvpHud.querySelector('.pvp-respawn').textContent = respawn > 0 ? 'RESPAWNING IN ' + respawn : '';
+  }
+
+  _showPvpOver(title, winnerName, meScore, foeScore) {
+    this.audio.sfx(title === 'Victory' ? 'win' : 'lose');
+    this._setPlayInput(false); this.input.exitLock();
+    this.state = 'result'; this.hud.show(false);
+    if (this._pvpHud) this._pvpHud.style.display = 'none';
+    const host = this.coopRole === 'host';
+    const el = this._showCoopOverlay(`
+      <div class="coop-title">${title}</div>
+      <div class="coop-sub" style="text-align:center">${winnerName} takes it · <b>${meScore}</b> — <b>${foeScore}</b></div>
+      ${host ? '<button class="btn primary" data-act="rematch">↻ Rematch</button>' : '<div class="coop-status">Waiting for host to rematch…</div>'}
+      <button class="btn ghost" data-act="leave">⏏ Leave to Menu</button>`);
+    const rm = el.querySelector('[data-act="rematch"]');
+    if (rm) rm.addEventListener('click', () => { this._clearCoopOverlay(); this._pvpBuild(); });
+    el.querySelector('[data-act="leave"]').addEventListener('click', () => this.quitToMenu());
+  }
+  // GUEST entry for the broadcast end-of-match event. The host labels itself 'You'
+  // and the guest 'Rival', so winnerName === 'Rival' means the guest won.
+  _guestPvpOver(winnerName, hostFrags, guestFrags) {
+    if (this.state === 'result') return;
+    if (this._pvp) this._pvp.over = true;
+    const guestWon = winnerName === 'Rival';
+    this._showPvpOver(guestWon ? 'Victory' : 'Defeat', guestWon ? 'You' : 'Rival', guestFrags, hostFrags);
   }
 
   // ---------- results ----------
@@ -1669,7 +1904,8 @@ export class Game {
     }
     // advance any co-op/dummy players sharing the world
     for (const rp of this.players) { if (rp !== this.player) this._updateRemotePlayer(rp, dt, ctx); }
-    if (this.coopRole === 'host') this._updateDownsAndRevives(dt, ctx);
+    if (this.coopRole === 'host' && this._pvp) this._pvpUpdate(dt);              // deaths/frags/respawns
+    else if (this.coopRole === 'host') this._updateDownsAndRevives(dt, ctx);
     // touch QoL: auto-reload a dry magazine
     if (this.isTouch && this.player.weapon && this.player.weapon.needsReload() && this.player.weapon.reloading <= 0) {
       if (this.player.weapon.startReload()) this.audio.sfx('reload');
@@ -1716,7 +1952,8 @@ export class Game {
     this.hud.update(dt, hs, this.enemies, this.player);
     // solo driver-gunner sees the free turret reticle; the co-op host only drives (the guest aims), so hide it
     this.hud.setTurret(this.vehicle && this.coopRole !== 'host' ? { x: this.vehicle.aim.x, y: this.vehicle.aim.y, locked: !!this.vehicle.lockedTarget } : null);
-    if (this.coopRole) this._updateCoopHud();
+    if (this.coopRole && !this._pvp) this._updateCoopHud();
+    if (this._pvp) this._updatePvpHud();
 
     // player death (Survival runs its own game-over; campaign rooms use onFail). In
     // co-op a single death just downs/kills that player — the shared all-down flow

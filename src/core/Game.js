@@ -323,6 +323,7 @@ export class Game {
     for (const p of this.players) { if (p !== this.player && p._avatar) this.scene.remove(p._avatar); }
     this.players = [];
     clearGhosts(this);
+    this._clearVehGhost();
     this._clearCoopHud();
     if (this._hostAvatar) { this.scene.remove(this._hostAvatar); this._hostAvatar = null; }
     if (this._svHudEl) { this._svHudEl.remove(); this._svHudEl = null; }
@@ -361,6 +362,13 @@ export class Game {
         onTelegraph: (p, radius, duration, color) => { this._spawnTelegraph(p, radius, duration, color); this._netPush('tel', p.x, p.z, radius, duration, color || 0xff5a5a); },
         onMuzzleFlash: (def) => this._muzzle(def),
         onHitmark: () => this.hud.hitMark(),
+        // co-op turret: spawn the tracer + report + hitmark locally AND mirror them to
+        // the guest gunner (who's actually aiming it) so their shots read on their screen.
+        onTurretFire: (a, b, hit) => {
+          this._spawnTracer(a, b); this.audio.sfx('rifle'); if (hit) this.hud.hitMark();
+          const rt = (n) => Math.round(n * 100) / 100;
+          this._netPush('vfire', rt(a.x), rt(a.y), rt(a.z), rt(b.x), rt(b.y), rt(b.z), hit ? 1 : 0);
+        },
         shake: (a) => { this.shakeAmt = Math.max(this.shakeAmt, a); },
         // '[Interact]' in prompt text is replaced with the binding (or a tap hint
         // on touch); the contextual Use button also follows the prompt.
@@ -517,7 +525,9 @@ export class Game {
       // Networked guest: trust the latest packet's transform, then run combat-only
       // (Player.update remote branch) so the host resolves the guest's shots/etc.
       const pkt = rp._netInput.latest;
-      if (pkt) { rp.pos.set(pkt.x, pkt.y, pkt.z); rp.yaw = pkt.yaw; rp.pitch = pkt.pitch; if (pkt.h) rp.curHeight = pkt.h; }
+      // a co-op gunner rides the vehicle — its position is owned by the Vehicle, not
+      // its reported transform — so only take its look (drives the turret aim).
+      if (pkt) { if (!rp._gunner) rp.pos.set(pkt.x, pkt.y, pkt.z); rp.yaw = pkt.yaw; rp.pitch = pkt.pitch; if (pkt.h) rp.curHeight = pkt.h; }
       rp._netInput.beginFrame();
       rp.update(dt, rp._netInput, this.settings, ctx);
     }
@@ -802,6 +812,9 @@ export class Game {
 
   _updateCoopHud() {
     if (!this.coopRole || this.state !== 'playing') { this._clearCoopHud(); return; }
+    // during the vehicle escape both ride the transport (invulnerable, co-located) —
+    // the down/revive markers are moot and would just clutter screen-centre.
+    if (this.vehicle || this._guestGunner) { this._clearCoopHud(); return; }
     this._ensureCoopHud();
     // resolve my own + my partner's down state, whichever side we're on
     let meDowned = false, meDead = false, meBleed = 0, meRevive = 0;
@@ -941,13 +954,26 @@ export class Game {
     if (this.isTouch && this.touch) { const fire = this.touch.fireHeld || this.touch.tapFire; this.touch.tapFire = false; this.input.setVirtual('fire', fire); }
     this.input.beginFrame();
     const ctx = this._ctx();
-    this.settings._adsActive = this.input.isDown('ads') && this.player.weapon != null;
-    const scoped = !!(this.settings._adsActive && this.player.weapon && this.player.weapon.def.scoped);
+    // as a turret gunner, Fire/ADS work the turret — never our handheld scope/ADS.
+    const gunner = this._guestGunner && this._vehGhost;
+    this.settings._adsActive = !gunner && this.input.isDown('ads') && this.player.weapon != null;
+    const scoped = !gunner && !!(this.settings._adsActive && this.player.weapon && this.player.weapon.def.scoped);
     if (scoped !== this._scoped) { this._scoped = scoped; this.audio.sfx(scoped ? 'scopein' : 'scopeout'); }
 
-    this.player.updateGuest(dt, this.input, this.settings, ctx);
+    interpolateGhosts(this, dt);   // update ghost/host-avatar/vehicle positions before we ride them
+    if (gunner) {
+      // turret seat: position comes from the host's synced transform (the vehicle
+      // ghost); we just free-look to aim and forward Fire — the host's turret shoots.
+      this.player.driving = true;
+      this.player._look(this.input, this.settings);
+      this.player.pos.copy(this._vehGhost.mesh.position);
+      this.player._syncCamera(this.settings, dt);
+    } else {
+      this.player.driving = false;
+      this.player.updateGuest(dt, this.input, this.settings, ctx);
+    }
     this._setViewModel(this.player.weapon ? this.player.weapon.key : null);
-    this._guestFireCosmetic(dt);
+    if (!gunner) this._guestFireCosmetic(dt);
     this._updateViewModel(dt, scoped);
 
     this._netInputAccum += dt;
@@ -956,7 +982,6 @@ export class Game {
       this.net.send('input', serializeInput(this.player, this.input, this.touch, ++this._netSeq));
     }
 
-    interpolateGhosts(this, dt);
     this._updateGuestHud(dt, scoped);
     this._updateCoopHud();
     if (this.aureole) this.aureole.rotation.z += dt * 0.01;
@@ -1049,6 +1074,43 @@ export class Game {
     if (this._viewModel) this._viewModel.visible = false;
     this.camera.fov = this.settings.data.video.fov; this.camera.updateProjectionMatrix();
     this.audio.sfx('objective');
+    if (this.coopRole === 'host') {
+      // co-op: the host DRIVES, the guest gunner mans IRIS's turret. Seat the guest
+      // beside us and make the run a driving/shooting gauntlet (no incoming damage),
+      // so a downed passenger can't soft-lock the timed escape (the driver can't revive).
+      const guest = this._guestPlayer;
+      if (this.player.downed || this.player.dead) this.player.revive();   // start the finale clean
+      if (guest) {
+        if (guest.downed || guest.dead) guest.revive();
+        guest.driving = true; guest._gunner = true; guest.pos.copy(this.vehicle.pos); guest.dmgTakenMult = 0;
+      }
+      this.player.dmgTakenMult = 0;
+      this.hud.setObjective('DRIVE — race the collapse to the Vanguard. Mind the edges.');
+      this.hud.banner('DRIVE', 'Floor it — your gunner clears the road. No guardrails, no time.', 2.6);
+      this._netPush('mountveh', 'GUNNER — work IRIS’s turret. Aim and hold Fire to clear the road.');
+      if (this.net) this.net.send('snap', serializeSnapshot(this));   // get the gunner mounted promptly
+    }
+  }
+
+  // GUEST: the host just mounted the transport — we're the gunner. Ride the seat
+  // (position comes from the host's synced transform), free-look to aim, Fire to
+  // shoot the host's turret. A vehicle ghost replaces our buddy avatar.
+  _guestEnterGunner(objective) {
+    this._guestGunner = true;
+    if (!this._vehGhost) {
+      const mesh = AssetFactory.vehicle();
+      this.scene.add(mesh);
+      this._vehGhost = { mesh, buf: [] };
+    }
+    if (this._hostAvatar) this._hostAvatar.visible = false;   // we ride together; show the truck, not the buddy
+    if (this._viewModel) this._viewModel.visible = false;
+    this.hud.setObjective(objective || 'GUNNER — aim and Fire to clear the road.');
+    this.hud.banner('GUNNER', 'You’re on IRIS’s turret — aim and hold Fire to clear the path.', 2.6);
+    this.audio.sfx('objective');
+  }
+  _clearVehGhost() {
+    if (this._vehGhost) { this.scene.remove(this._vehGhost.mesh); this._vehGhost = null; }
+    this._guestGunner = false;
   }
 
   // ---------- results ----------
@@ -1468,8 +1530,14 @@ export class Game {
 
     this.player.update(dt, this.input, this.settings, ctx);
     if (this.vehicle) {
-      this.vehicle.update(dt, this.input, ctx);   // drag-look moves the turret reticle (mouseDX)
+      // co-op: host drives, the guest's networked input guns the turret. The guest
+      // rides along, and the host's player.yaw tracks the heading so the guest's
+      // vehicle ghost (built from the synced host transform) faces the right way.
+      const gun = (this.coopRole === 'host' && this._guestPlayer) ? this._guestPlayer._netInput : null;
+      this.vehicle.update(dt, this.input, ctx, gun);   // drag-look (solo) or remote gunner (co-op)
       this.player.pos.copy(this.vehicle.pos);
+      this.player.yaw = this.vehicle.heading;
+      if (gun && this._guestPlayer) this._guestPlayer.pos.copy(this.vehicle.pos);
     } else if (this.isTouch) {
       this._touchAssist(dt);                       // soft aim magnetism off the centred reticle
     }
@@ -1520,7 +1588,8 @@ export class Game {
 
     // HUD
     this.hud.update(dt, hs, this.enemies, this.player);
-    this.hud.setTurret(this.vehicle ? { x: this.vehicle.aim.x, y: this.vehicle.aim.y, locked: !!this.vehicle.lockedTarget } : null);
+    // solo driver-gunner sees the free turret reticle; the co-op host only drives (the guest aims), so hide it
+    this.hud.setTurret(this.vehicle && this.coopRole !== 'host' ? { x: this.vehicle.aim.x, y: this.vehicle.aim.y, locked: !!this.vehicle.lockedTarget } : null);
     if (this.coopRole) this._updateCoopHud();
 
     // player death (Survival runs its own game-over; campaign rooms use onFail). In

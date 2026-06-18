@@ -14,6 +14,7 @@ export class Projectile {
     this.id = _pidCounter++;          // stable id for co-op ghost reconciliation
     this.type = opts.type;            // 'goo' | 'shard' | 'grenade' | 'bossbolt' | enemy 'goo'
     this.owner = opts.owner;          // 'player' | 'enemy'
+    this.ownerPlayer = opts.ownerPlayer || null;   // the firing Player (PvP: frag attribution + targets)
     this.pos = opts.pos.clone();
     this.vel = opts.vel.clone();
     this.damage = opts.damage || 10;
@@ -49,14 +50,15 @@ export class Projectile {
     // planted on a surface: nothing to do but wait for the fuse
     if (this._stuck) return;
 
-    if (this.homing && ctx.enemies) {
+    const owned = this.owner === 'player' ? (ctx.combatTargets ? ctx.combatTargets(this.ownerPlayer) : ctx.enemies) : null;
+    if (this.homing && owned) {
       // Chase the locked aimed-at target; if it's gone, re-acquire the nearest
       // body (so a shot into a cluster keeps finding fresh Wobble).
       let target = (this.homingTarget && !this.homingTarget.dead) ? this.homingTarget : null;
       if (!target) {
         this.homingTarget = null;
         let bestD = 28;
-        for (const e of ctx.enemies) {
+        for (const e of owned) {
           if (e.dead) continue;
           const d = e.pos.distanceTo(this.pos);
           if (d < bestD) { bestD = d; target = e; }
@@ -110,8 +112,8 @@ export class Projectile {
     this.mesh.position.copy(this.pos);
 
     // entity collision
-    if (this.owner === 'player' && ctx.enemies) {
-      for (const e of ctx.enemies) {
+    if (this.owner === 'player' && (ctx.combatTargets ? ctx.combatTargets(this.ownerPlayer) : ctx.enemies)) {
+      for (const e of (ctx.combatTargets ? ctx.combatTargets(this.ownerPlayer) : ctx.enemies)) {
         if (e.dead) continue;
         if (this.pos.distanceTo(e.aimPoint()) < 0.9) {
           if (isNade) {
@@ -128,7 +130,7 @@ export class Projectile {
             ctx.audio && ctx.audio.sfx('nadebounce');
             break;
           }
-          e.takeDamage(this.damage, { shieldMult: this.shieldMult, source: this.pos });
+          e.takeDamage(this.damage, { shieldMult: this.shieldMult, source: this.pos, attacker: this.ownerPlayer });
           ctx.audio && ctx.audio.sfx('hitmark');
           ctx.onHitmark && ctx.onHitmark();
           return this.splash ? this.explode(ctx) : this._impact(ctx);
@@ -175,17 +177,19 @@ export class Projectile {
     ctx.audio && ctx.audio.sfx('explosion');
     ctx.spawnExplosion && ctx.spawnExplosion(this.pos, this.splash || 2.5);
     const r = this.splash || 2.5;
-    if (this.owner === 'player' && ctx.enemies) {
-      for (const e of ctx.enemies) {
+    if (this.owner === 'player') {
+      const tgts = ctx.combatTargets ? ctx.combatTargets(this.ownerPlayer) : ctx.enemies;   // enemies, or PvP foes
+      for (const e of tgts) {
         if (e.dead) continue;
         const d = e.aimPoint().distanceTo(this.pos);
-        if (d < r) e.takeDamage(this.damage * (1 - d / r) + this.damage * 0.4, { shieldMult: this.shieldMult, source: this.pos });
+        if (d < r) e.takeDamage(this.damage * (1 - d / r) + this.damage * 0.4, { shieldMult: this.shieldMult, source: this.pos, attacker: this.ownerPlayer });
       }
       // your own grenades are not your friends (cooked too long / bounced back) —
-      // and in co-op they're not your buddy's friends either
+      // and in co-op they're not your buddy's friends either. Skip anyone already
+      // hit as a combat target above (PvP foes) so they don't take splash twice.
       if (this.type === 'grenade' && ctx.players) {
         for (const pl of ctx.players) {
-          if (!pl || pl.dead || pl.downed) continue;
+          if (!pl || pl.dead || pl.downed || tgts.indexOf(pl) !== -1) continue;
           const d = pl.headPoint().distanceTo(this.pos);
           if (d < r) pl.takeDamage(this.damage * (1 - d / r) * 0.5, this.pos);
         }

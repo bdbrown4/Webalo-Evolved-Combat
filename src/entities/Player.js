@@ -118,6 +118,9 @@ export class Player {
   }
 
   headPoint() { return new THREE.Vector3(this.pos.x, this.pos.y + this.curHeight * 0.92, this.pos.z); }
+  // chest point — where shots and splash register when a Player is a combat target
+  // (PvP). Mirrors Enemy.aimPoint so the same hit/aim code works for either.
+  aimPoint() { return new THREE.Vector3(this.pos.x, this.pos.y + this.curHeight * 0.6, this.pos.z); }
 
   lookDir() {
     return new THREE.Vector3(
@@ -127,8 +130,12 @@ export class Player {
     ).normalize();
   }
 
-  takeDamage(amount, sourcePos) {
+  // opts is either a source Vector3 (enemy hits — legacy) or an options object
+  // { source, attacker, ... } (PvP, where attacker is the Player who fired — tracked
+  // for frag attribution by the host).
+  takeDamage(amount, opts) {
     if (this.dead || this.downed || amount <= 0) return; // downed players are out of the fight
+    if (opts && !opts.isVector3 && opts.attacker) { this.lastAttacker = opts.attacker; this.lastAttackerT = 0; }
     amount *= this.dmgTakenMult; // difficulty scaling
     this.regenT = 0;
     this.lastHitFlash = 0.3;
@@ -317,7 +324,7 @@ export class Player {
       for (let s = 0; s < (def.burst || 1); s++) {  // burst = a multi-shot volley (Stinger alt)
         const dir = this._spreadDir(def.spread);
         ctx.spawnProjectile && ctx.spawnProjectile({
-          type: def.projectile, owner: 'player', pos: origin,
+          type: def.projectile, owner: 'player', ownerPlayer: this, pos: origin,
           vel: dir.multiplyScalar(def.projectileSpeed), damage: def.damage,
           splash: def.splash || 0, shieldMult: (def.shieldMult || 1) * this.shieldDmgMult, homing: !!def.homing, homingTarget, life: 4,
         });
@@ -339,7 +346,7 @@ export class Player {
   // the homing projectile re-acquires nearest if that one dies (group sweep).
   _aimTarget(origin, dir, ctx, minDot = 0.97) {
     let best = null, bestDot = minDot;
-    for (const e of ctx.enemies) {
+    for (const e of (ctx.combatTargets ? ctx.combatTargets(this) : ctx.enemies)) {
       if (e.dead) continue;
       const to = this._tmp.subVectors(e.aimPoint(), origin);
       const dist = to.length();
@@ -365,7 +372,7 @@ export class Player {
     const wallDist = ctx.physics.raycastWorld(origin, dir, def.range);
     let bestT = Math.min(def.range, wallDist);
     let target = null, headshot = false;
-    for (const e of ctx.enemies) {
+    for (const e of (ctx.combatTargets ? ctx.combatTargets(this) : ctx.enemies)) {
       if (e.dead) continue;
       const hit = this._raySphere(origin, dir, e.aimPoint(), e.type === 'boss' ? 3.2 : 0.7);
       if (hit !== null && hit < bestT) {
@@ -378,7 +385,7 @@ export class Player {
     const point = origin.clone().addScaledVector(dir, bestT);
     if (target) {
       let dmg = def.damage * (headshot ? (def.headshotMult || 1) : 1);
-      target.takeDamage(dmg, { shieldMult: (def.shieldMult || 1) * this.shieldDmgMult, source: origin, crit: headshot });
+      target.takeDamage(dmg, { shieldMult: (def.shieldMult || 1) * this.shieldDmgMult, source: origin, crit: headshot, attacker: this });
       if (def.knockback) target.vel.add(dir.clone().setY(0).multiplyScalar(def.knockback));
       ctx.spawnTracer && ctx.spawnTracer(origin, point);
       return true;

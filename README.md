@@ -118,6 +118,11 @@ first run; if your org restricts that, set **Settings → Pages → Source** to
 - **Data-driven campaign** — an 8-mission arc authored as plain data (see
   `missions/schema.js`), with four difficulty tiers and automatic mid-mission
   checkpoints.
+- **Deathmatch (PvP)** — 1v1 over the same direct peer-to-peer link as co-op
+  (host-authoritative). Players damage each other (hitscan, projectiles and
+  splash, with frag attribution), respawn at opposite ends, and race to a
+  host-set frag limit, with a live scoreboard and a rematch flow. FFA and 2v2
+  teams are a planned follow-up (they need the transport extended past two peers).
 - **Daily Challenge** — one seeded run per calendar day, the same for everyone:
   a **Survival of the Day** and a rotating **Mission of the Day**, each with that
   day's **mutators** (Glass Cannon, Horde Night, Moon Boots, Juggernauts…). Your

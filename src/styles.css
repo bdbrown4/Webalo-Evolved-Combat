@@ -810,3 +810,17 @@ html.touch .crawl-skip { padding: 12px 22px; font-size: 15px; }
 .pvp-score .pvp-sep { opacity: 0.5; margin: 0 10px; }
 .pvp-limit { font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--ink-dim); margin-top: 2px; }
 .pvp-respawn { margin-top: 8px; font-size: 15px; font-weight: 700; letter-spacing: 2px; color: #ff6a4a; }
+
+/* ---------- PvP scoreboard (FFA list / teams) ---------- */
+.pvp-board { min-width: 160px; }
+.pvp-list { display: flex; flex-direction: column; gap: 3px; background: rgba(8,16,22,0.55); border: 1px solid var(--panel-edge); border-radius: 8px; padding: 7px 10px; }
+.pvp-row { display: flex; justify-content: space-between; gap: 18px; font-size: 14px; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
+.pvp-row .pr-f { font-weight: 800; color: var(--ink); }
+.pvp-row.mine { color: var(--hud-amber); }
+.pvp-row.mine .pr-f { color: var(--hud-amber); }
+.pvp-list.final { width: min(280px, 70vw); margin: 12px auto 4px; font-size: 16px; }
+.pvp-teams { font-size: 26px; font-weight: 800; letter-spacing: 1px; text-shadow: 0 2px 8px rgba(0,0,0,0.6); }
+.pvp-teams .pt.a { color: #5aa0ff; } .pvp-teams .pt.b { color: #ff6a4a; }
+.pvp-teams .pt.mine { text-decoration: underline; text-underline-offset: 4px; }
+.pvp-teams .pvp-sep { opacity: 0.5; margin: 0 10px; color: var(--ink-dim); }
+.pvp-roster { margin: 4px 0 10px; font-size: 13px; line-height: 1.7; color: var(--ink); background: rgba(8,16,22,0.5); border: 1px solid var(--panel-edge); border-radius: 8px; padding: 8px 14px; }

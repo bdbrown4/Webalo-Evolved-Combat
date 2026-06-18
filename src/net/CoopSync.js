@@ -212,7 +212,10 @@ function applyEvent(game, ev) {
   else if (k === 'expl') game._spawnExplosion(new THREE.Vector3(ev[1], ev[2], ev[3]), ev[4]);
   else if (k === 'sfx') game.audio && game.audio.sfx(ev[1]);
   else if (k === 'kill') game.hud && game.hud.killFeed(ev[1], ev[2]);
+  else if (k === 'esc') game.hud && game.hud.setEscape(ev[1]);
   else if (k === 'coopover') game._showCoopOver(ev[1], ev[2], false);
+  else if (k === 'mcomplete') game._guestMissionComplete(ev[1]);
+  else if (k === 'coopfail') game._showCoopFail(false);
 }
 
 export function clearGhosts(game) {

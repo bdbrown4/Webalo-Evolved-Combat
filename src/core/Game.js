@@ -81,6 +81,10 @@ export class Game {
     this.projectiles = [];
     this.players = [];          // all players in the world; [local] solo, [local, remote…] in co-op
     this.net = null; this.coopRole = null;   // 'host' | 'guest' while a co-op session is live
+    this._coopMode = 'survival';             // 'survival' | 'campaign' — what a co-op session plays
+    this._guestRunPerks = [];                // co-op campaign: guest's chosen perks (host applies on rebuild)
+    this._pendingGuestPerk = null;           // a perk the guest picked, awaiting the host's next advance
+    this._hostPendingPerk = null;            // the host's pick on the current mission-complete screen
     this._ghosts = new Map();                // guest: enemy id -> { mesh, target } ghosts
     this._projGhosts = new Map();            // guest: projectile id -> { mesh } ghosts
     this._netEvents = [];                    // host: one-shot events queued for the next snapshot
@@ -368,7 +372,9 @@ export class Game {
         onObjective: (t) => { this.hud.setObjective(t); this._netPush('obj', t); },
         onDialogue: (lines) => this.hud.queueDialogue(lines),
         onBanner: (a, b, s) => { this.hud.banner(a, b, s); this._netPush('banner', a, b, s); },
-        onEscape: (t) => this.hud.setEscape(t),
+        // escape timer: mirror to the guest, but only when the whole-second readout
+        // changes (it ticks every frame) so we don't flood the event queue at 20Hz.
+        onEscape: (t) => { this.hud.setEscape(t); const s = t == null ? null : Math.ceil(t); if (this.coopRole === 'host' && s !== this._lastEscPush) { this._lastEscPush = s; this._netPush('esc', s); } },
         onPickup: () => {},
         onCheckpoint: (segment) => this._saveCheckpoint(segment),
         onMountVehicle: () => this._mountVehicle(),
@@ -434,6 +440,10 @@ export class Game {
   }
   restartFresh() {
     this._clearResult();
+    // co-op is host-authoritative: the host rebuilds the current mission for both;
+    // a guest can't restart on its own, so it just resumes (host owns the restart).
+    if (this.coopRole === 'host') { this._coopBuildMission(); this.onResume && this.onResume(); return; }
+    if (this.coopRole === 'guest') { this.onResume && this.onResume(); return; }
     // freeplay modes restart themselves, not a campaign mission
     if (this.survival) { this.startSurvival(); this.onResume && this.onResume(); return; }
     if (this.tutorial) { this.startTutorial(); this.onResume && this.onResume(); return; }
@@ -461,6 +471,10 @@ export class Game {
     p.netId = opts.id || 'guest';
     p.dmgTakenMult = this._diff ? this._diff.dmgTaken : 1;
     (opts.weapons || ['rifle', 'pistol']).forEach((w) => p.giveWeapon(w));
+    // co-op campaign: the guest carries its own run perks (host-authoritative, so the
+    // host applies them to the simulated guest player and tops it up to the new maxes)
+    (opts.perks || []).forEach((id) => applyPerk(p, id));
+    p.shield = p.shieldMax; p.health = p.healthMax;
     p._avatar = this._makeBuddyAvatar(opts.color);
     p._avatar.position.copy(p.pos);
     this.scene.add(p._avatar);
@@ -521,26 +535,46 @@ export class Game {
   // queue a one-shot event for the next snapshot (no-op unless we're the host)
   _netPush(k, ...d) { if (this.coopRole === 'host') this._netEvents.push([k, ...d]); }
 
-  // HOST: called once the guest's transport connects. Builds the shared-seed arena,
-  // drops the guest in as a networked player, and starts shipping snapshots.
+  // HOST: called once the guest's transport connects. Wires the one-time net handlers,
+  // then builds the first mission (Survival arena, or campaign mission 0). Subsequent
+  // rebuilds — shared retries and campaign advances — go straight to _coopBuildMission.
   startCoopHost(net) {
     this.net = net; this.coopRole = 'host';
+    this._coopOver = false; this._coopLeft = false;
+    this._runPerks = []; this._guestRunPerks = []; this._pendingGuestPerk = null; this._hostPendingPerk = null;
+    this.missionIndex = 0; this._lastEscPush = null;
+    net.on('input', (pkt) => { if (this._guestPlayer && this._guestPlayer._netInput) this._guestPlayer._netInput.feed(pkt); });
+    net.on('retryReq', () => { if (this._coopOver) this._coopRetry(); });
+    net.on('guestPerk', (id) => { this._pendingGuestPerk = id; });        // campaign: guest's between-mission pick
+    net.onState((s) => { if (s === 'closed') this._onPeerLeft(); });
+    this._coopBuildMission();
+  }
+
+  // HOST: build (or rebuild) the CURRENT co-op mission under a fresh shared seed, drop
+  // the guest in beside us, and ship 'start' so the guest builds the matching world.
+  // Reused for the initial launch, a shared retry, and a campaign mission advance.
+  _coopBuildMission() {
+    this._coopOver = false; this._coopLeft = false; this._lastEscPush = null;
     this._levelSeed = (Date.now() & 0x7fffffff) || 1;
-    this.missionIndex = 0; this._resume = false; this._runPerks = [];
-    this._beginMission(SURVIVAL_MISSION);
-    this.level.freeplay = true;
+    this._resume = false;
+    const campaign = this._coopMode === 'campaign';
+    if (campaign) {
+      this._beginMission(CAMPAIGN[this.missionIndex]);             // win/advance handled by the level
+    } else {
+      this.missionIndex = 0; this._runPerks = [];
+      this._beginMission(SURVIVAL_MISSION);
+      this.level.freeplay = true;
+    }
     const gs = this.player.pos.clone(); gs.x += 4;                 // guest spawns beside the host
-    const guest = this.addRemotePlayer(gs, { color: 0xffb454, id: 'guest' });
+    // arm the simulated guest with the mission's loadout so the host resolves the
+    // guest's shots with the SAME weapon the guest sees locally (campaign loadouts vary)
+    const guestWeapons = campaign ? CAMPAIGN[this.missionIndex].startWeapons.slice() : ['rifle', 'pistol'];
+    const guest = this.addRemotePlayer(gs, { color: 0xffb454, id: 'guest', weapons: guestWeapons, perks: campaign ? this._guestRunPerks : [] });
     guest._netInput = new NetInputProxy();
     this._guestPlayer = guest;
     this.player.downable = true; guest.downable = true;            // co-op: 0 HP downs, doesn't kill
-    this._coopOver = false; this._coopLeft = false;
-    net.on('input', (pkt) => { if (this._guestPlayer && this._guestPlayer._netInput) this._guestPlayer._netInput.feed(pkt); });
-    net.on('retryReq', () => { if (this._coopOver) this._coopRetry(); });
-    net.onState((s) => { if (s === 'closed') this._onPeerLeft(); });
-    net.send('start', { seed: this._levelSeed, gs: { x: gs.x, y: gs.y, z: gs.z } });
-    this.survival = new Survival(this.root, this, () => this.quitToMenu());
-    this.survival.start();
+    this.net.send('start', { seed: this._levelSeed, gs: { x: gs.x, y: gs.y, z: gs.z }, mode: this._coopMode, mi: this.missionIndex, gPerks: this._guestRunPerks });
+    if (!campaign) { this.survival = new Survival(this.root, this, () => this.quitToMenu()); this.survival.start(); }
   }
 
   // GUEST: register handlers as soon as we join; the world is built when the host's
@@ -554,17 +588,23 @@ export class Game {
   }
 
   _beginCoopGuest(d) {
-    // each 'start' (re)builds the world — initial join AND co-op retries arrive here
+    // each 'start' (re)builds the world — initial join, co-op retries, AND campaign
+    // mission advances all arrive here, carrying the host's mode/seed/mission index.
     this._netClock = 0;
     this._levelSeed = d.seed;
-    this.missionIndex = 0; this._resume = false; this._runPerks = [];
-    this._beginMission(SURVIVAL_MISSION);
-    this.level.freeplay = true;
+    this._coopMode = d.mode || 'survival';
+    this._resume = false; this._runPerks = [];
+    const campaign = this._coopMode === 'campaign';
+    this.missionIndex = campaign ? (d.mi || 0) : 0;
+    this._guestRunPerks = d.gPerks || [];                          // mirrors the host's view of our perks
+    this._beginMission(campaign ? CAMPAIGN[this.missionIndex] : SURVIVAL_MISSION);
+    if (!campaign) this.level.freeplay = true;
     if (d.gs) { this.player.pos.set(d.gs.x, d.gs.y, d.gs.z); this.player._syncCamera(this.settings, 0); }
     this._hostAvatar = this._makeBuddyAvatar(0x3d7bd6);            // the host, drawn from snapshots
     this.scene.add(this._hostAvatar);
-    this._initGuestSurvivalHud();
+    if (!campaign) this._initGuestSurvivalHud();
     this._clearCoopOverlay();
+    this._clearResult();                                          // drop any lingering mission-complete screen
   }
 
   // ---------- co-op: lobby / connection ----------
@@ -581,12 +621,14 @@ export class Game {
   _coopCancel(net) { try { net && net.close(); } catch (e) { /* gone */ } this._pendingNet = null; this._clearCoopOverlay(); this.onQuit && this.onQuit(); }
 
   // HOST over Trystero relays: show a room code, wait for the guest, then begin.
-  coopHost() {
+  coopHost(mode) {
+    this._coopMode = mode || 'survival';
+    const where = this._coopMode === 'campaign' ? 'New Campaign' : 'Survival';
     const code = makeRoomCode();
     const net = hostTrystero(code); this._pendingNet = net;
     const el = this._showCoopOverlay(`
-      <div class="coop-title">Hosting Co-op</div>
-      <div class="coop-sub">Send this code to your friend — they open Survival and pick <b>Join</b>:</div>
+      <div class="coop-title">Hosting ${this._coopMode === 'campaign' ? 'Campaign' : 'Survival'} Co-op</div>
+      <div class="coop-sub">Send this code to your friend — they open <b>${where}</b> and pick <b>Join</b>:</div>
       <div class="coop-code">${code}</div>
       <button class="btn" data-act="copy">⧉ Copy Code</button>
       <div class="coop-wait"><span class="coop-spinner"></span><span class="coop-status">Waiting for a friend to join…</span></div>
@@ -603,7 +645,9 @@ export class Game {
   }
 
   // JOIN over Trystero relays: enter the host's code, connect, wait for 'start'.
-  coopJoin(code) {
+  // The authoritative mode comes from the host's 'start' packet; this is just a hint.
+  coopJoin(code, mode) {
+    this._coopMode = mode || 'survival';
     const net = joinTrystero(code); this._pendingNet = net;
     const el = this._showCoopOverlay(`
       <div class="coop-title">Joining ${code}</div>
@@ -673,6 +717,12 @@ export class Game {
   _coopAllDown() {
     if (this._coopOver) return;
     this._coopOver = true;
+    if (this._coopMode === 'campaign') {                            // both fell mid-mission → shared retry
+      this._netPush('coopfail');
+      if (this.net) this.net.send('snap', serializeSnapshot(this));
+      this._showCoopFail(true);
+      return;
+    }
     const wave = this.survival ? this.survival.wave : 0;
     const score = this.survival ? this.survival.score : 0;
     if (this.survival) this.survival.recordBest();
@@ -707,7 +757,7 @@ export class Game {
     if (this.coopRole === 'host') {
       if (!this._coopOver) return;                 // only valid from the game-over lobby
       this._clearCoopOverlay();
-      this.startCoopHost(this.net);                // new arena + new 'start' → guest rebuilds
+      this._coopBuildMission();                    // rebuild the current mission → guest rebuilds
     } else {
       if (this.net) this.net.send('retryReq', 1);
       this._coopSetStatus(el, 'Asking the host to restart…');
@@ -820,7 +870,8 @@ export class Game {
   }
 
   // MANUAL host (no relays): produce an offer, paste back the guest's answer.
-  async coopHostManual() {
+  async coopHostManual(mode) {
+    this._coopMode = mode || 'survival';
     const net = createManual('host'); this._pendingNet = net;
     const offer = await net.manual.createOffer();
     const el = this._showCoopOverlay(`
@@ -845,7 +896,8 @@ export class Game {
   }
 
   // MANUAL join (no relays): paste the host's offer, generate an answer to send back.
-  coopJoinManual() {
+  coopJoinManual(mode) {
+    this._coopMode = mode || 'survival';
     const net = createManual('guest'); this._pendingNet = net;
     const el = this._showCoopOverlay(`
       <div class="coop-title">Manual Join (no relays)</div>
@@ -1011,15 +1063,39 @@ export class Game {
     this._clearMeleeModel();
     if (this._viewModel) this._viewModel.visible = !this.player.driving;
     this.audio.sfx('win');
-    markCompleted(this.missionIndex);
-    clearCheckpoint(this.missionIndex);
     const m = CAMPAIGN[this.missionIndex];
     const isFinaleDone = this.missionIndex >= CAMPAIGN.length - 1;
+    // co-op host: don't touch solo save progress; tell the guest, then show the
+    // shared mission-complete screen (each side picks its own upgrade).
+    if (this.coopRole === 'host') {
+      this._coopOver = true;
+      this._netPush('mcomplete', isFinaleDone ? 1 : 0);
+      if (this.net) this.net.send('snap', serializeSnapshot(this));   // flush so the guest gets it now
+      this.hud.banner('MISSION COMPLETE', m.outro, 3);
+      setTimeout(() => { if (this.coopRole === 'host') this._showCoopResult(isFinaleDone); }, 2600);
+      return;
+    }
+    markCompleted(this.missionIndex);
+    clearCheckpoint(this.missionIndex);
     this.hud.banner('MISSION COMPLETE', m.outro, 3);
     setTimeout(() => this._showResult(true, isFinaleDone), 2600);
   }
   _missionFailed(reason) {
     if (this.state === 'result') return;
+    // co-op host: an objective/escape failure ends the run for both — shared retry.
+    if (this.coopRole === 'host') {
+      this._coopOver = true;
+      this._setPlayInput(false); this.input.exitLock();
+      this.state = 'result'; this.hud.clearTransients();
+      this._clearNadeModel(); this._clearMeleeModel();
+      if (this._viewModel) this._viewModel.visible = !this.player.driving;
+      this.audio.sfx('lose');
+      this._netPush('coopfail');
+      if (this.net) this.net.send('snap', serializeSnapshot(this));
+      this.hud.banner('MISSION FAILED', reason || 'You fell on the Aureole.', 2.5);
+      setTimeout(() => { if (this.coopRole === 'host') this._showCoopFail(true); }, 2200);
+      return;
+    }
     this.state = 'result';
     this._setPlayInput(false); this.input.exitLock();
     this.hud.clearTransients();
@@ -1029,6 +1105,100 @@ export class Game {
     this.audio.sfx('lose');
     this.hud.banner('DOWN', reason || 'You fell on the Aureole.', 2.5);
     setTimeout(() => this._showResult(false, false), 2200);
+  }
+
+  // ---------- co-op: campaign mission flow (host-authoritative) ----------
+  // GUEST: the host finished the mission. Freeze, then show our own complete screen.
+  _guestMissionComplete(finaleDone) {
+    if (this.state === 'result' || this._coopLeft) return;
+    this.state = 'result';
+    this._setPlayInput(false); this.input.exitLock();
+    this.audio.sfx('win');
+    this.hud.banner('MISSION COMPLETE', CAMPAIGN[this.missionIndex] ? CAMPAIGN[this.missionIndex].outro : '', 3);
+    setTimeout(() => { if (this.coopRole === 'guest' && !this._coopLeft && this.state === 'result') this._showCoopResult(!!finaleDone); }, 1600);
+  }
+
+  // Shared mission-complete screen, shown on BOTH peers. Each side draws and picks
+  // its own upgrade; only the HOST gets the "Next Mission" button (host-only continue).
+  // The guest forwards its pick and waits — the host's next 'start' rebuilds its world.
+  _showCoopResult(finaleDone) {
+    this._setPlayInput(false); this.input.exitLock();
+    this.state = 'result';
+    this.hud.show(false);
+    this._clearCoopHud();
+    this._hostPendingPerk = null;
+    const host = this.coopRole === 'host';
+    const next = this.missionIndex + 1 < CAMPAIGN.length;
+    const m = CAMPAIGN[this.missionIndex];
+    const owned = host ? this._runPerks : this._guestRunPerks;
+    const choices = (!finaleDone && next) ? PERK_IDS.filter((id) => !owned.includes(id)).sort(() => Math.random() - 0.5).slice(0, 3) : [];
+    const perkSection = choices.length
+      ? `<div class="perk-pick"><div class="perk-pick-head">◆ Choose your upgrade</div><div class="perk-cards">${
+        choices.map((id) => `<button class="perk-card" data-perk="${id}"><b>${PERKS[id].name}</b><span>${PERKS[id].desc}</span></button>`).join('')
+      }</div></div>` : '';
+    const buttons = finaleDone
+      ? '<button class="btn primary" data-act="leave">★ Finish</button>'
+      : (host
+        ? '<button class="btn primary" data-act="continue">▶ Next Mission</button><button class="btn ghost" data-act="leave">⏏ Leave to Menu</button>'
+        : '<button class="btn ghost" data-act="leave">⏏ Leave to Menu</button>');
+    const el = this._showCoopOverlay(`
+      <div class="coop-title">${finaleDone ? 'The Halo Goes Dark' : 'Mission Complete'}</div>
+      <div class="coop-sub" style="text-align:center">${finaleDone ? 'Sgt. Orion and his partner ride the wreckage out. The Aureole is silent.' : (m ? m.outro : '')}</div>
+      ${perkSection}
+      <div class="coop-status"></div>
+      <div class="menu-list">${buttons}</div>`);
+    el.querySelectorAll('[data-perk]').forEach((b) => b.addEventListener('click', () => {
+      this.audio.sfx('objective');
+      el.querySelectorAll('[data-perk]').forEach((x) => x.classList.remove('chosen'));
+      b.classList.add('chosen');
+      this._coopPickPerk(b.dataset.perk);
+    }));
+    const cont = el.querySelector('[data-act="continue"]');
+    if (cont) cont.addEventListener('click', () => this._coopAdvance());
+    const leave = el.querySelector('[data-act="leave"]');
+    if (leave) leave.addEventListener('click', () => this.quitToMenu());
+    if (!host && !finaleDone) this._coopSetStatus(el, 'Host leads — pick your upgrade; you’ll deploy when they continue.');
+  }
+
+  // Record an upgrade pick. Host stashes it locally (applied on advance); guest
+  // forwards it so the host can apply it to the simulated guest on the next build.
+  _coopPickPerk(id) {
+    if (this.coopRole === 'host') { this._hostPendingPerk = id; }
+    else {
+      if (this.net) this.net.send('guestPerk', id);
+      const st = this._coopOverlayEl && this._coopOverlayEl.querySelector('.coop-status');
+      if (st) st.textContent = 'Upgrade locked in — waiting for the host to continue…';
+    }
+  }
+
+  // HOST only: commit both players' picks and build the next mission (host-only continue).
+  _coopAdvance() {
+    if (this.coopRole !== 'host') return;
+    if (this._hostPendingPerk && !this._runPerks.includes(this._hostPendingPerk)) this._runPerks.push(this._hostPendingPerk);
+    if (this._pendingGuestPerk && !this._guestRunPerks.includes(this._pendingGuestPerk)) this._guestRunPerks.push(this._pendingGuestPerk);
+    this._hostPendingPerk = null; this._pendingGuestPerk = null;
+    this._clearCoopOverlay();
+    this.missionIndex = Math.min(this.missionIndex + 1, CAMPAIGN.length - 1);
+    this._coopBuildMission();
+  }
+
+  // Shared mission-failed screen (both fell, or an objective/escape failed). Retry
+  // rebuilds the SAME mission for both; the guest just asks the host to.
+  _showCoopFail(isHost) {
+    this._setPlayInput(false); this.input.exitLock();
+    this.state = 'result';
+    this.hud.show(false);
+    if (this.survival && this.survival.hudEl) this.survival.hudEl.classList.add('hidden');
+    this._clearCoopHud();
+    const m = CAMPAIGN[this.missionIndex];
+    const el = this._showCoopOverlay(`
+      <div class="coop-title">You Both Fell</div>
+      <div class="coop-sub" style="text-align:center">${m ? m.name : 'The Aureole'} — still linked up.</div>
+      <button class="btn primary" data-act="retry">↻ Retry Mission</button>
+      <div class="coop-status"></div>
+      <button class="btn ghost" data-act="leave">⏏ Leave to Menu</button>`);
+    el.querySelector('[data-act="retry"]').addEventListener('click', () => this._coopRetry(el));
+    el.querySelector('[data-act="leave"]').addEventListener('click', () => this.quitToMenu());
   }
 
   // ---------- between-mission perks ----------
@@ -1353,8 +1523,10 @@ export class Game {
     this.hud.setTurret(this.vehicle ? { x: this.vehicle.aim.x, y: this.vehicle.aim.y, locked: !!this.vehicle.lockedTarget } : null);
     if (this.coopRole) this._updateCoopHud();
 
-    // player death (Survival runs its own game-over; campaign rooms use onFail)
-    if (this.player.dead && this.state === 'playing' && !this.survival) ctx.onFail('Sgt. Orion is down. The eulogy will have to wait.');
+    // player death (Survival runs its own game-over; campaign rooms use onFail). In
+    // co-op a single death just downs/kills that player — the shared all-down flow
+    // (_coopAllDown) ends the run, so don't fail the mission on one player's death.
+    if (this.player.dead && this.state === 'playing' && !this.survival && !this.coopRole) ctx.onFail('Sgt. Orion is down. The eulogy will have to wait.');
 
     // co-op host: ship the world to the guest at NET_SNAP_HZ
     if (this.coopRole === 'host' && this.net) {

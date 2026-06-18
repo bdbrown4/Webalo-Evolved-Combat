@@ -118,6 +118,13 @@ first run; if your org restricts that, set **Settings → Pages → Source** to
 - **Data-driven campaign** — an 8-mission arc authored as plain data (see
   `missions/schema.js`), with four difficulty tiers and automatic mid-mission
   checkpoints.
+- **Two-player co-op** — bring a friend through either **Survival** or the whole
+  **Campaign**, over direct peer-to-peer (Trystero relays, or paste-the-code
+  manual connect — no account, no server). Host-authoritative: one player runs
+  the simulation and streams ~20 Hz world snapshots; the guest predicts its own
+  movement and renders the rest. Downed teammates can be revived, and each player
+  picks their own between-mission upgrade. The host leads the campaign mission to
+  mission; the guest follows.
 
 ## Default controls
 

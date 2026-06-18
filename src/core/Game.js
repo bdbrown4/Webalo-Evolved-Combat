@@ -1282,12 +1282,12 @@ export class Game {
       g._netInput = new NetInputProxy();
       this._pvpArm(g, sp[pid], pid, team, teams ? `Blue ${Math.ceil(pid / 2)}` : 'P' + (pid + 1));
       this._pvpGuests.set(peerId, g);
-      this.net.send('start', { seed: this._levelSeed, mode: teams ? 'teams' : 'ffa', fragLimit: this._pvp.fragLimit,
+      this.net.send('start', { seed: this._levelSeed, mode: this._pvp.mode, fragLimit: this._pvp.fragLimit,
         myId: pid, team, players: peers.length + 1,
         spawn: { x: sp[pid].x, y: sp[pid].y, z: sp[pid].z, yaw: sp[pid].yaw } }, peerId);
     });
     this._ensurePvpHud();
-    this.hud.banner(teams ? 'TEAM DEATHMATCH' : 'FREE-FOR-ALL', `First to ${this._pvp.fragLimit} frags${teams ? ' (team total)' : ''}.`, 2.6);
+    this.hud.banner(teams ? 'TEAM DEATHMATCH' : this._pvp.mode === 'duel' ? 'DUEL' : 'FREE-FOR-ALL', `First to ${this._pvp.fragLimit} frags${teams ? ' (team total)' : ''}.`, 2.6);
   }
 
   // Configure a player as a PvP combatant: a fixed spawn, id/team/name, fresh score,
@@ -1380,7 +1380,7 @@ export class Game {
     this._pvpMe = null; this._pvpBoard = null; this._wasPvpDead = false;
     this._ensurePvpHud();
     this._clearCoopOverlay(); this._clearResult();
-    this.hud.banner(d.mode === 'teams' ? 'TEAM DEATHMATCH' : 'FREE-FOR-ALL', `First to ${this._pvp.fragLimit} frags.`, 2.6);
+    this.hud.banner(d.mode === 'teams' ? 'TEAM DEATHMATCH' : d.mode === 'duel' ? 'DUEL' : 'FREE-FOR-ALL', `First to ${this._pvp.fragLimit} frags.`, 2.6);
   }
 
   // ---------- PvP: lobby ----------
@@ -1388,27 +1388,34 @@ export class Game {
   pvpHost(opts) {
     const code = makeRoomCode();
     const net = hostTrystero(code); this._pendingNet = net;
-    this._pvpConfig = { fragLimit: (opts && opts.fragLimit) || 15, mode: (opts && opts.mode) || 'ffa' };
+    const mode = (opts && opts.mode) || 'ffa';
+    this._pvpConfig = { fragLimit: (opts && opts.fragLimit) || 15, mode };
     this._lobbyPeers = [];
-    const cap = this._pvpConfig.mode === 'teams' ? 4 : 4;
-    const modeName = this._pvpConfig.mode === 'teams' ? '2v2 Teams' : 'Free-for-All';
+    const duel = mode === 'duel';
+    const cap = duel ? 2 : 4;                          // duel = exactly two players
+    const modeName = duel ? '1v1 Duel' : mode === 'teams' ? '2v2 Teams' : 'Free-for-All';
+    const launch = () => { this._pendingNet = null; this._clearCoopOverlay(); this.startPvpHost(net); };
     const el = this._showCoopOverlay(`
       <div class="coop-title">Hosting ${modeName}</div>
-      <div class="coop-sub">Share this code — rivals open <b>Deathmatch</b> and pick <b>Join</b>:</div>
+      <div class="coop-sub">Share this code — ${duel ? 'your rival opens' : 'rivals open'} <b>Deathmatch</b> and pick${duel ? 's' : ''} <b>Join</b>:</div>
       <div class="coop-code">${code}</div>
       <button class="btn" data-act="copy">⧉ Copy Code</button>
-      <div class="coop-sub" style="margin-top:8px">First to <b>${this._pvpConfig.fragLimit}</b> frags · up to <b>${cap}</b> players.</div>
+      <div class="coop-sub" style="margin-top:8px">First to <b>${this._pvpConfig.fragLimit}</b> frags · ${duel ? '2 players' : 'up to <b>' + cap + '</b> players'}.</div>
       <div class="pvp-roster" data-roster>You (host)</div>
-      <button class="btn primary" data-act="start" disabled>▶ Start Match</button>
+      ${duel ? '<div class="coop-wait"><span class="coop-spinner"></span><span class="coop-status">Waiting for your rival to join…</span></div>' : '<button class="btn primary" data-act="start" disabled>▶ Start Match</button>'}
       <button class="btn ghost" data-act="cancel">Cancel</button>`);
     const copyBtn = el.querySelector('[data-act="copy"]');
     copyBtn.addEventListener('click', () => { try { navigator.clipboard.writeText(code); copyBtn.textContent = '✓ Copied'; setTimeout(() => { copyBtn.textContent = '⧉ Copy Code'; }, 1200); } catch (e) {} });
     const startBtn = el.querySelector('[data-act="start"]');
     const roster = el.querySelector('[data-roster]');
-    const refresh = () => { roster.innerHTML = 'You (host)' + this._lobbyPeers.map((_, i) => `<br>Player ${i + 2} — joined`).join(''); startBtn.disabled = this._lobbyPeers.length < 1; };
-    net.onPeer((id) => { if (this._lobbyPeers.length < cap - 1 && !this._lobbyPeers.includes(id)) { this._lobbyPeers.push(id); this.audio.sfx('ui'); refresh(); } });
+    const refresh = () => { roster.innerHTML = 'You (host)' + this._lobbyPeers.map((_, i) => `<br>Player ${i + 2} — joined`).join(''); if (startBtn) startBtn.disabled = this._lobbyPeers.length < 1; };
+    net.onPeer((id) => {
+      if (this._lobbyPeers.length < cap - 1 && !this._lobbyPeers.includes(id)) { this._lobbyPeers.push(id); this.audio.sfx('ui'); refresh(); }
+      // a 1v1 needs no "Start" — launch as soon as the single rival connects
+      if (duel && this._lobbyPeers.length >= 1) { this._coopSetStatus(el, 'Rival connected! Launching…', true); this._coopLaunchTimer = setTimeout(launch, 700); }
+    });
     net.onPeerGone((id) => { const i = this._lobbyPeers.indexOf(id); if (i >= 0) { this._lobbyPeers.splice(i, 1); refresh(); } });
-    startBtn.addEventListener('click', () => { if (!this._lobbyPeers.length) return; this._pendingNet = null; this._clearCoopOverlay(); this.startPvpHost(net); });
+    if (startBtn) startBtn.addEventListener('click', () => { if (!this._lobbyPeers.length) return; launch(); });
     el.querySelector('[data-act="cancel"]').addEventListener('click', () => this._coopCancel(net));
   }
   pvpJoin(code) {

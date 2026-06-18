@@ -124,8 +124,12 @@ export class Menus {
     this.clear();
     this.screen = 'pvp';
     this._pvpFrag = this._pvpFrag || 15;
-    this._pvpMode = this._pvpMode || 'ffa';
-    const modeLabel = (m) => m === 'teams' ? '2v2 Teams' : 'Free-for-All';
+    this._pvpMode = this._pvpMode || 'duel';
+    const MODES = ['duel', 'ffa', 'teams'];
+    const modeLabel = (m) => m === 'duel' ? '1v1 Duel' : m === 'teams' ? '2v2 Teams' : 'Free-for-All (2–4)';
+    const modeHint = (m) => m === 'duel' ? 'One on one — host and one rival, opposite corners.'
+      : m === 'teams' ? 'Two teams (Blue/Red), split by join order. Best with 4.'
+      : 'Everyone for themselves — start with anyone from 2 to 4 players.';
     this.el.innerHTML = `
       <div class="screen">
         <div class="title-block">
@@ -137,6 +141,7 @@ export class Menus {
             <label>Mode</label>
             <button class="btn ghost" data-act="mode" style="display:inline-block;padding:7px 16px">${modeLabel(this._pvpMode)}</button>
           </div>
+          <div class="hint" data-mode-hint style="text-align:center;margin:-4px 4px 4px">${modeHint(this._pvpMode)}</div>
           <div class="setting-row" style="justify-content:center;gap:14px;border:0">
             <label>Frag limit</label>
             <button class="btn ghost" data-act="frag" style="display:inline-block;padding:7px 16px">${this._pvpFrag}</button>
@@ -148,10 +153,11 @@ export class Menus {
           </div>
           <button class="btn ghost" data-act="back">← Back</button>
         </div>
-        <div class="menu-footer">Host picks mode + frag limit and shares the code; up to three rivals <b>Join</b>, then the host starts. 2v2 splits players into Blue/Red by join order.</div>
+        <div class="menu-footer">Host picks mode + frag limit and shares the code; rivals <b>Join</b>, then the host starts (1v1 launches as soon as your rival connects).</div>
       </div>`;
     const modeBtn = this.el.querySelector('[data-act="mode"]');
-    modeBtn.addEventListener('click', () => { this._click(); this._pvpMode = this._pvpMode === 'ffa' ? 'teams' : 'ffa'; modeBtn.textContent = modeLabel(this._pvpMode); });
+    const modeHintEl = this.el.querySelector('[data-mode-hint]');
+    modeBtn.addEventListener('click', () => { this._click(); this._pvpMode = MODES[(MODES.indexOf(this._pvpMode) + 1) % MODES.length]; modeBtn.textContent = modeLabel(this._pvpMode); modeHintEl.textContent = modeHint(this._pvpMode); });
     const fragBtn = this.el.querySelector('[data-act="frag"]');
     const fragOpts = [10, 15, 20, 30];
     fragBtn.addEventListener('click', () => { this._click(); this._pvpFrag = fragOpts[(fragOpts.indexOf(this._pvpFrag) + 1) % fragOpts.length]; fragBtn.textContent = this._pvpFrag; });

@@ -445,7 +445,11 @@ export class LevelBuilder {
       // of reach — neither should soft-lock the finale's drive segment. Ordinary
       // rooms still require a full sweep.
       const cleared = room.seg.event === 'boss' ? room.bossDead : (enemiesLeft === 0 && objectivesDone);
-      if (cleared) {
+      // Co-op campaign: even a cleared room won't advance while a squadmate is down —
+      // the standing player has to revive them first (squad cohesion). Surface why.
+      if (cleared && ctx.squadHeld && ctx.squadHeld()) {
+        ctx.setPrompt && ctx.setPrompt('Revive your squadmate to advance');
+      } else if (cleared) {
         room.cleared = true;
         this._openDoor(room, ctx);
         // last non-escape room with no door = win on clear

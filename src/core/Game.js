@@ -48,6 +48,10 @@ function detectTouch() {
   return coarse || (noHover && hasTouch);
 }
 
+// PvP: seconds of spawn protection on (re)spawn. Drops early the moment a player
+// fires (Player._fire), so it shields against spawn-camping without enabling it.
+const PVP_SPAWN_INVULN = 2.5;
+
 export class Game {
   constructor(canvas, root, settings, input, audio) {
     this.canvas = canvas;
@@ -415,6 +419,8 @@ export class Game {
         nearestPlayer: (pos) => { let best = null, bd = Infinity; for (const pl of this.players) { if (!pl || pl.dead || pl.downed) continue; const d = pl.pos.distanceToSquared(pos); if (d < bd) { bd = d; best = pl; } } return best; },
         // who a shooter may hit: enemies in PvE, or the opposing player(s) in PvP.
         combatTargets: (shooter) => this._combatTargets(shooter),
+        // co-op campaign: hold room-clear/advance while a squadmate is down (revive first).
+        squadHeld: () => this._coopSquadHeld(),
         _g: this,
         spawnEnemy: (type, pos) => { const e = new Enemy(type, pos); this._scaleEnemy(e); this.enemies.push(e); this.scene.add(e.mesh); return e; },
         requestSpawn: (type, n, near) => { const cap = 28; for (let i = 0; i < n && this.enemies.filter((x) => !x.dead).length < cap; i++) { const p = near.clone().add(new THREE.Vector3((Math.random() - 0.5) * 6, 0, (Math.random() - 0.5) * 6)); const e = new Enemy(type, p); this._scaleEnemy(e); this.enemies.push(e); this.scene.add(e.mesh); if (this.level) { const r = this.level.segments[this.level.activeIndex]; if (r) r.enemies.push(e); } } },
@@ -767,13 +773,31 @@ export class Game {
     return false;
   }
 
+  // Co-op campaign: progress is gated on squad cohesion — while ANY squadmate is
+  // down, the room won't clear/advance (the standing player must revive them).
+  // Solo, survival, and PvP never hold.
+  _coopSquadHeld() {
+    if (this.coopRole !== 'host' || this._pvp || this._coopMode !== 'campaign') return false;
+    // Gate on `downed` only: a downed mate is revivable, so holding here always has an
+    // exit. (Campaign players don't bleed out to `dead` — see _updateDownsAndRevives —
+    // so this never wedges on an unrevivable body.)
+    for (const p of this.players) if (p && p.downed) return true;
+    return false;
+  }
+
   _updateDownsAndRevives(dt, ctx) {
+    const campaign = this._coopMode === 'campaign';
     let anyUp = false;
     for (const p of this.players) {
       if (!p.dead && !p.downed) { anyUp = true; continue; }
       if (!p.downed) continue;
-      p.bleedT -= dt;                                   // bleed out if no one reaches them
-      if (p.bleedT <= 0) { p.downed = false; p.dead = true; p.reviveProg = 0; continue; }
+      if (!campaign) {                                  // survival: bleed out if no one reaches them
+        p.bleedT -= dt;
+        if (p.bleedT <= 0) { p.downed = false; p.dead = true; p.reviveProg = 0; continue; }
+      }
+      // Campaign: a downed player never bleeds out to permanent death while a
+      // teammate still stands — they wait to be revived (progress is held meanwhile).
+      // Both going down still ends the run via _coopAllDown below.
       let reviving = false;                             // a standing teammate, in range, holding Interact
       for (const r of this.players) {
         if (r === p || r.dead || r.downed) continue;
@@ -903,9 +927,14 @@ export class Game {
     this._coopVignette.style.opacity = meDowned ? '1' : '0';
     if (meDowned) {
       this._coopDownMsg.style.display = 'block';
+      // Campaign: no bleed-out clock — you wait (the run only ends if both fall), so
+      // show the squad-revive line instead of a countdown. Survival keeps the timer.
+      const downSub = this._coopMode === 'campaign'
+        ? `<div class="cd-sub">Hold on — your squad must revive you</div>`
+        : `<div class="cd-sub">Hold on — a teammate can revive you</div><div class="cd-timer">${Math.ceil(meBleed)}s</div>`;
       this._coopDownMsg.innerHTML = meRevive > 0.02
         ? `<div class="cd-big">BEING REVIVED…</div><div class="cd-bar"><i style="width:${Math.round(meRevive * 100)}%"></i></div>`
-        : `<div class="cd-big">YOU'RE DOWN</div><div class="cd-sub">Hold on — a teammate can revive you</div><div class="cd-timer">${Math.ceil(meBleed)}s</div>`;
+        : `<div class="cd-big">YOU'RE DOWN</div>${downSub}`;
     } else { this._coopDownMsg.style.display = 'none'; }
     // PARTNER: nameplate when up & on-screen; revive marker when downed & on-screen;
     // an edge arrow toward a DOWNED partner who's off-screen; a top alert when downed.
@@ -1035,7 +1064,7 @@ export class Game {
     // PvP: the host owns our life. While dead we freeze (respawn overlay); on the
     // dead→alive edge we snap to our spawn (the host has already moved us there).
     const pvpDead = !!(this._pvp && this._pvpMe && this._pvpMe.dead);
-    if (this._pvp && this._wasPvpDead && !pvpDead && this._mySpawn) { this.player.pos.copy(this._mySpawn); this.player.vel.set(0, 0, 0); this.player.yaw = this._mySpawn.yaw || 0; }
+    if (this._pvp && this._wasPvpDead && !pvpDead && this._mySpawn) { this.player.pos.copy(this._mySpawn); this.player.vel.set(0, 0, 0); this.player.yaw = this._mySpawn.yaw || 0; this.input.clearTransient(); }
     this._wasPvpDead = pvpDead;
     if (gunner) {
       // turret seat: position comes from the host's synced transform (the vehicle
@@ -1051,7 +1080,9 @@ export class Game {
       this.player.driving = false;
       this.player.updateGuest(dt, this.input, this.settings, ctx);
     }
-    this._setViewModel(this.player.weapon ? this.player.weapon.key : null);
+    // gunner: no handheld view-model (the turret is the weapon) — clearing it on the
+    // mount frame avoids a one-frame flash of the rifle before the seat takes over.
+    this._setViewModel(gunner ? null : (this.player.weapon ? this.player.weapon.key : null));
     if (!gunner) this._guestFireCosmetic(dt);
     this._updateViewModel(dt, scoped);
 
@@ -1101,9 +1132,10 @@ export class Game {
         dmgSfx: null, hitFlash: false, lowShield: me.shield <= 0 && me.health < this.player.healthMax * 0.5,
         scoped, scopeZoom: scoped && this.player.weapon ? this.player.weapon.def.adsZoom : 0, driving: false,
       };
-    } else if (this._guestGunner && this._vehGhost) {
+    } else if (this._guestGunner) {
       // turret gunner: an IRIS readout (unlimited, no reload) in place of the
-      // suppressed handheld weapon; the centred crosshair is the turret's aim.
+      // suppressed handheld weapon; the centred crosshair is the turret's aim. Keyed
+      // off _guestGunner alone so the label flips to IRIS the instant we mount.
       hs = {
         shield: gp ? gp.shield : this.player.shield, shieldMax: gp ? gp.shieldMax : this.player.shieldMax,
         health: gp ? gp.health : this.player.health, healthMax: gp ? gp.healthMax : this.player.healthMax,
@@ -1245,6 +1277,24 @@ export class Game {
     return out;
   }
 
+  // Pick the corner farthest from any living rival so a respawn doesn't drop you
+  // in someone's crosshairs. Teammates (2v2) don't count as threats. Combined with
+  // brief spawn protection (_invulnT), this defuses spawn-camping.
+  _pvpPickSpawn(forPlayer) {
+    const spawns = this._pvpSpawnPts && this._pvpSpawnPts.length ? this._pvpSpawnPts : this._pvpSpawns(4);
+    let best = spawns[0], bestDist = -Infinity;
+    for (const s of spawns) {
+      let nearest = Infinity;
+      for (const o of this.players) {
+        if (!o || o === forPlayer || o.dead || o.downed) continue;
+        if (this._pvp && this._pvp.teams && o._team === forPlayer._team) continue;   // a teammate is no threat
+        nearest = Math.min(nearest, o.pos.distanceTo(s));
+      }
+      if (nearest > bestDist) { bestDist = nearest; best = s; }   // Infinity (no rivals) wins outright
+    }
+    return best;
+  }
+
   // HOST lobby → start: wire the one-time net handlers (input is tagged by peerId so
   // each guest's controls reach the right body), then build the first round.
   startPvpHost(net) {
@@ -1271,6 +1321,7 @@ export class Game {
     this._pvp = { fragLimit: this._pvpConfig.fragLimit, mode: this._pvpConfig.mode, teams, over: false };
     const peers = this._pvpPeers;
     const sp = this._pvpSpawns(peers.length + 1);
+    this._pvpSpawnPts = this._pvpSpawns(4);     // full corner set, for respawn placement
     this._pvpGuests = new Map();
     // host = player id 0
     this._pvpArm(this.player, sp[0], 0, teams ? 0 : 0, 'You');
@@ -1280,7 +1331,7 @@ export class Game {
       const pid = i + 1, team = teams ? pid % 2 : pid;
       const g = this.addRemotePlayer(sp[pid], { color: pvpColor(teams, pid, team), id: 'p' + pid, weapons: ['rifle', 'pistol'] });
       g._netInput = new NetInputProxy();
-      this._pvpArm(g, sp[pid], pid, team, teams ? `Blue ${Math.ceil(pid / 2)}` : 'P' + (pid + 1));
+      this._pvpArm(g, sp[pid], pid, team, teams ? `${team === 0 ? 'Blue' : 'Red'} ${Math.ceil(pid / 2)}` : 'P' + (pid + 1));
       this._pvpGuests.set(peerId, g);
       this.net.send('start', { seed: this._levelSeed, mode: this._pvp.mode, fragLimit: this._pvp.fragLimit,
         myId: pid, team, players: peers.length + 1,
@@ -1298,13 +1349,20 @@ export class Game {
     p.health = p.healthMax; p.shield = p.shieldMax; p.regenT = 0;
     p._pid = pid; p._team = team; p._pvpName = name; p._frags = 0; p._spawn = spawn;
     p._respawnT = null; p._pvpDeadHandled = false; p.lastAttacker = null;
+    p._invulnT = PVP_SPAWN_INVULN;                  // brief shield off the start line
     if (p._avatar) p._avatar.visible = true;
   }
 
   _pvpRespawn(p) {
+    const s = this._pvpPickSpawn(p) || p._spawn;    // farthest corner from the living rivals
     p.dead = false; p.downed = false; p.health = p.healthMax; p.shield = p.shieldMax; p.regenT = 0;
-    p.pos.copy(p._spawn); p.vel.set(0, 0, 0); p.yaw = p._spawn.yaw || 0; p.lastAttacker = null;
-    if (p === this.player) this.player._syncCamera(this.settings, 0);
+    p.pos.copy(s); p.vel.set(0, 0, 0); p.yaw = s.yaw || 0; p.lastAttacker = null;
+    p._invulnT = PVP_SPAWN_INVULN;                  // spawn protection — drops the moment they fire (Player._fire)
+    if (p === this.player) {
+      this.player._syncCamera(this.settings, 0);
+      this.input.clearTransient();                  // don't carry a death-frame press into the respawn
+      this.hud.banner('RESPAWN', 'Spawn shield up — fire to drop it.', 1.4);
+    }
     if (p._avatar) p._avatar.visible = true;
   }
 
@@ -1314,6 +1372,7 @@ export class Game {
   _pvpUpdate(dt) {
     if (!this._pvp) return;
     for (const p of this.players) {
+      if (p._invulnT > 0) p._invulnT -= dt;            // spawn protection ticking down
       if (p.dead && !p._pvpDeadHandled) {
         p._pvpDeadHandled = true; p._respawnT = 3.0;
         if (p._avatar) p._avatar.visible = false;

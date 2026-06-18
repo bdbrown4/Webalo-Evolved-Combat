@@ -135,6 +135,7 @@ export class Player {
   // for frag attribution by the host).
   takeDamage(amount, opts) {
     if (this.dead || this.downed || amount <= 0) return; // downed players are out of the fight
+    if (this._invulnT > 0) return;                       // PvP spawn protection (host-authoritative)
     if (opts && !opts.isVector3 && opts.attacker) { this.lastAttacker = opts.attacker; this.lastAttackerT = 0; }
     amount *= this.dmgTakenMult; // difficulty scaling
     this.regenT = 0;
@@ -304,6 +305,7 @@ export class Player {
   // base def: Boomstick slug, Goocaster blast, Stinger volley. Weapons with no
   // `alt` just fire normally while aiming.
   _fire(ctx, useAlt) {
+    if (this._invulnT > 0) this._invulnT = 0;     // PvP: taking a shot drops spawn protection
     const w = this.weapon, base = w.def;
     const isAlt = !!(useAlt && base.alt);
     const def = isAlt ? Object.assign({}, base, base.alt) : base;

@@ -521,13 +521,13 @@ export class Menus {
       btn.addEventListener('click', () => {
         this._click();
         this.el.querySelectorAll('.rebind-btn.listening').forEach((b) => b.classList.remove('listening'));
-        btn.classList.add('listening'); btn.textContent = 'Press a key…';
+        btn.classList.add('listening'); btn.textContent = 'Press a key… (Esc / controller Ⓑ cancels)';
+        const revert = () => { btn.classList.remove('listening'); btn.textContent = codeLabel(this.settings.bindings[a.id]); };
         this.input.startRebind(a.id, () => {
-          btn.classList.remove('listening');
-          btn.textContent = codeLabel(this.settings.bindings[a.id]);
+          revert();
           // refresh in case the key was stolen from another action
           this._renderTab('controls');
-        });
+        }, revert);   // onCancel: restore the label if the capture is aborted
       });
       body.appendChild(this._row(a.label, '', btn));
     });
@@ -563,7 +563,7 @@ export class Menus {
     body.appendChild(this._row('Field of View', '', this._slider('video.fov', 60, 110, 1, (v) => v + '°')));
     body.appendChild(this._row('Mouse Sensitivity', '', this._slider('mouse.sensitivity', 0.2, 3, 0.05, (v) => parseFloat(v).toFixed(2))));
     body.appendChild(this._row('ADS Sensitivity', 'Look speed while aiming', this._slider('mouse.adsScale', 0.2, 1, 0.05, (v) => parseFloat(v).toFixed(2))));
-    body.appendChild(this._row('Controller Sensitivity', 'Right-stick look speed (gamepad)', this._slider('mouse.padSensitivity', 0.3, 2.5, 0.05, (v) => parseFloat(v).toFixed(2))));
+    body.appendChild(this._row('Controller Sensitivity', 'Right-stick look speed (gamepad)', this._slider('mouse.padSensitivity', 0.3, 2.0, 0.05, (v) => parseFloat(v).toFixed(2))));
     body.appendChild(this._row('Invert Y Axis', '', this._toggle('mouse.invertY')));
     body.appendChild(this._row('Dynamic Shadows', '', this._toggle('video.shadows')));
     body.appendChild(this._row('Bloom / Glow', 'Soft glow on bright lights and projectiles', this._toggle('video.bloom')));

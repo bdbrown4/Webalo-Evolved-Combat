@@ -30,6 +30,9 @@ export class GamepadNav {
     if (this.game.state === 'playing') { if (this.els.length) this.clear(); return; }
     const nav = this.input.pollMenuNav();
     if (!nav.active) { if (this.els.length) this.clear(); return; }
+    // A rebind is capturing a key — a controller can't press a key/Esc to finish or
+    // cancel, so let Ⓑ abort it (and swallow nav so we don't also click "back").
+    if (this.input.isRebinding()) { if (nav.back) this.input.cancelRebind(); return; }
     const els = this._focusables();
     const same = els.length === this.els.length && els.every((e, i) => e === this.els[i]);
     this.els = els;
@@ -66,21 +69,34 @@ export class GamepadNav {
     }
   }
 
-  // A: activate a button/tab/toggle/rebind; cycle a dropdown; sliders use left/right
+  // A: activate a button/tab/toggle/rebind; cycle a dropdown; sliders use left/right.
+  // Pressing A on a tab opens it and drops focus INTO the panel (its first control),
+  // so you head straight into the settings; left/right still cycles tabs in place.
   _activate(el) {
     if (el.tagName === 'INPUT' && el.type === 'range') return;
     if (el.tagName === 'SELECT') { this._adjust(el, 1); return; }
     const wasTab = el.classList.contains('tab');
     el.click();
-    if (wasTab) this._refocusTab();
+    if (wasTab) this._focusFirstContent();
   }
 
   // after a tab switch the body re-renders — keep the highlight on the active tab
+  // (used by left/right tab cycling so you can keep stepping through the row)
   _refocusTab() {
     const els = this._focusables();
     this.els = els;
     const ai = els.findIndex((e) => e.classList.contains('tab') && e.classList.contains('active'));
     this.idx = ai >= 0 ? ai : (els.length ? 0 : -1);
+    this._apply();
+  }
+
+  // after confirming a tab, move the highlight onto the first non-tab control in
+  // the newly shown panel (falling back to the tab row if the panel is empty)
+  _focusFirstContent() {
+    const els = this._focusables();
+    this.els = els;
+    const i = els.findIndex((e) => !e.classList.contains('tab'));
+    this.idx = i >= 0 ? i : (els.length ? 0 : -1);
     this._apply();
   }
 }

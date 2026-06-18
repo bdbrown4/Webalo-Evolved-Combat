@@ -8,12 +8,14 @@
 import { MUTATOR_IDS, MISSION_MUTATOR_IDS } from './Mutators.js';
 import { CAMPAIGN } from '../missions/campaign.js';
 
-// Local calendar day as YYYYMMDD (a stable integer key + the daily seed).
+// UTC calendar day as YYYYMMDD (a stable integer key + the daily seed). UTC — not
+// local time — so the "everyone gets the same Challenge" promise holds across
+// time zones: two players a continent apart compute the same key for the same day.
 export function dayKey(date = new Date()) {
-  return date.getFullYear() * 10000 + (date.getMonth() + 1) * 100 + date.getDate();
+  return date.getUTCFullYear() * 10000 + (date.getUTCMonth() + 1) * 100 + date.getUTCDate();
 }
 export function dayLabel(date = new Date()) {
-  return date.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+  return date.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric', timeZone: 'UTC' });
 }
 
 // Small deterministic LCG seeded from an integer — same date, same sequence.

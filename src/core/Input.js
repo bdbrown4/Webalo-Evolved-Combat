@@ -90,7 +90,9 @@ export class Input {
     this._gpActive = !!gp;
     const next = new Set();
     if (gp) {
-      const DZ = 0.18, LOOK = 22 * (this.settings.data.mouse.padSensitivity || 1);
+      // padSensitivity is capped at 2.0 so even a stale higher saved value can't push
+      // the look speed into the twitchy/unusable range (2.0 → LOOK 44).
+      const DZ = 0.18, LOOK = 22 * Math.min(2.0, this.settings.data.mouse.padSensitivity || 1);
       const dz = (v) => (Math.abs(v) < DZ ? 0 : v);
       const a = gp.axes, b = gp.buttons;
       const down = (i) => !!(b[i] && (b[i].pressed || b[i].value > 0.5));
@@ -158,21 +160,30 @@ export class Input {
   requestLock() { if (this.canvas.requestPointerLock) this.canvas.requestPointerLock(); }
   exitLock() { if (document.exitPointerLock) document.exitPointerLock(); }
 
-  // Begin capturing the next key/mouse press as the binding for `action`.
-  startRebind(action, onDone) {
+  // Begin capturing the next key/mouse press as the binding for `action`. onCancel
+  // fires if the capture is aborted (Escape, controller B, or leaving Settings), so
+  // the UI can revert the "Press a key…" prompt instead of getting stuck on it.
+  startRebind(action, onDone, onCancel) {
+    this._rebindCancel = onCancel || null;
     this._rebindResolver = (code) => {
       this.settings.setBinding(action, code);
-      this._rebindResolver = null;
+      this._rebindResolver = null; this._rebindCancel = null;
       onDone && onDone(code);
     };
   }
-  cancelRebind() { this._rebindResolver = null; }
+  cancelRebind() {
+    if (!this._rebindResolver) return;
+    this._rebindResolver = null;
+    const c = this._rebindCancel; this._rebindCancel = null;
+    c && c();
+  }
+  isRebinding() { return !!this._rebindResolver; }
 
   _codeForMouseButton(btn) { return 'Mouse' + btn; }
 
   _handleCapture(code) {
     if (!this._rebindResolver) return false;
-    if (code === 'Escape') { this._rebindResolver = null; return true; } // cancel
+    if (code === 'Escape') { this.cancelRebind(); return true; } // cancel (reverts the UI)
     this._rebindResolver(code);
     return true;
   }
@@ -211,6 +222,9 @@ export class Input {
       if (this.locked && this.enabled) {
         this.mouseDX += e.movementX || 0;
         this.mouseDY += e.movementY || 0;
+        // moving the mouse reclaims keyboard/mouse as the active device, so in-game
+        // prompts flip back from controller glyphs after you set the pad down.
+        if (e.movementX || e.movementY) this.lastSource = 'kbd';
       }
     });
     window.addEventListener('wheel', (e) => {
@@ -247,6 +261,17 @@ export class Input {
   }
 
   endFrame() { this.mouseDX = 0; this.mouseDY = 0; this.wheel = 0; }
+
+  // Drop any buffered one-shot edges + look/scroll deltas WITHOUT disturbing held
+  // keys (those re-fire from live key state). Used on PvP respawn so a press from
+  // the death frame can't leak through, while a held move key keeps working.
+  clearTransient() {
+    this._actionEdge.clear();
+    const now = new Set();
+    for (const a in this.settings.bindings) if (this._isCodeDown(a)) now.add(a);
+    this._prevActionDown = now;     // so pressed() stays false next frame for still-held keys
+    this.mouseDX = 0; this.mouseDY = 0; this.wheel = 0;
+  }
 
   isDown(action) { return this.enabled && this._isCodeDown(action); }
   pressed(action) { return this.enabled && this._actionEdge.has(action); } // edge: true only on the frame it went down

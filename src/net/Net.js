@@ -37,21 +37,30 @@ class TrysteroTransport {
     this._action = this._room.makeAction('m');
     this._peers = new Set();
     this._openCbs = []; this._closeCbs = []; this._msgCb = null;
-    this._action.onMessage = (data) => { this._msgCb && this._msgCb(data); };
+    this._peerCbs = []; this._peerGoneCbs = [];           // per-peer join/leave (multi-peer FFA)
+    // Trystero hands the sending peer's id alongside the data — we surface it so the
+    // host can tell which guest a message came from.
+    this._action.onMessage = (data, peerId) => { this._msgCb && this._msgCb(data, peerId); };
     this._room.onPeerJoin = (id) => {
       const first = this._peers.size === 0;
       this._peers.add(id);
-      if (first) this._openCbs.forEach((f) => f());
+      if (first) this._openCbs.forEach((f) => f());       // legacy: first peer = "connected"
+      this._peerCbs.forEach((f) => f(id));
     };
     this._room.onPeerLeave = (id) => {
       this._peers.delete(id);
+      this._peerGoneCbs.forEach((f) => f(id));
       if (this._peers.size === 0) this._closeCbs.forEach((f) => f());
     };
   }
   onOpen(fn) { this._openCbs.push(fn); }
   onMessage(fn) { this._msgCb = fn; }
   onClose(fn) { this._closeCbs.push(fn); }
-  sendRaw(obj) { try { this._action.send(obj); } catch (e) { /* peer gone mid-send */ } }
+  onPeer(fn) { this._peerCbs.push(fn); }
+  onPeerGone(fn) { this._peerGoneCbs.push(fn); }
+  peers() { return [...this._peers]; }
+  // peerId omitted → broadcast to everyone; supplied → unicast to that peer.
+  sendRaw(obj, peerId) { try { peerId ? this._action.send(obj, peerId) : this._action.send(obj); } catch (e) { /* peer gone mid-send */ } }
   close() { try { this._room.leave(); } catch (e) { /* already gone */ } }
 }
 
@@ -64,6 +73,7 @@ class ManualTransport {
     this._pc = new RTCPeerConnection(ICE);
     this._dc = null;
     this._openCbs = []; this._closeCbs = []; this._msgCb = null;
+    this._peerCbs = []; this._peerGoneCbs = [];
     this._pc.onconnectionstatechange = () => {
       const s = this._pc.connectionState;
       if (s === 'disconnected' || s === 'failed' || s === 'closed') this._closeCbs.forEach((f) => f());
@@ -76,9 +86,11 @@ class ManualTransport {
   }
   _bindDc(dc) {
     this._dc = dc;
-    dc.onopen = () => this._openCbs.forEach((f) => f());
-    dc.onclose = () => this._closeCbs.forEach((f) => f());
-    dc.onmessage = (e) => { if (!this._msgCb) return; try { this._msgCb(JSON.parse(e.data)); } catch (_) { /* drop garbage */ } };
+    // a manual link is a single peer — present it through the multi-peer API as the
+    // lone peer 'p0' so callers can use one code path (1v1 only; FFA needs relays).
+    dc.onopen = () => { this._openCbs.forEach((f) => f()); this._peerCbs.forEach((f) => f('p0')); };
+    dc.onclose = () => { this._peerGoneCbs.forEach((f) => f('p0')); this._closeCbs.forEach((f) => f()); };
+    dc.onmessage = (e) => { if (!this._msgCb) return; try { this._msgCb(JSON.parse(e.data), 'p0'); } catch (_) { /* drop garbage */ } };
   }
   // Host step 1: produce an offer blob to send the guest.
   async createOffer() {
@@ -107,6 +119,9 @@ class ManualTransport {
   onOpen(fn) { this._openCbs.push(fn); }
   onMessage(fn) { this._msgCb = fn; }
   onClose(fn) { this._closeCbs.push(fn); }
+  onPeer(fn) { this._peerCbs.push(fn); }
+  onPeerGone(fn) { this._peerGoneCbs.push(fn); }
+  peers() { return this._dc && this._dc.readyState === 'open' ? ['p0'] : []; }
   sendRaw(obj) { if (this._dc && this._dc.readyState === 'open') this._dc.send(JSON.stringify(obj)); }
   close() { try { this._dc && this._dc.close(); } catch (_) {} try { this._pc.close(); } catch (_) {} }
 }
@@ -135,11 +150,17 @@ export class NetSession {
     this._stateCbs = [];
     transport.onOpen(() => { this.connected = true; this._emit('connected'); });
     transport.onClose(() => { const was = this.connected; this.connected = false; if (was) this._emit('closed'); });
-    transport.onMessage((obj) => { const h = obj && this._handlers[obj.t]; if (h) h(obj.d); });
+    // handlers receive (payload, peerId) — single-peer callers (co-op, 1v1) ignore peerId.
+    transport.onMessage((obj, peerId) => { const h = obj && this._handlers[obj.t]; if (h) h(obj.d, peerId); });
   }
   on(type, fn) { this._handlers[type] = fn; return this; }
-  send(type, payload) { this._t.sendRaw({ t: type, d: payload }); }
+  // peerId omitted → broadcast; supplied → unicast (host → one guest).
+  send(type, payload, peerId) { this._t.sendRaw({ t: type, d: payload }, peerId); }
   onState(cb) { this._stateCbs.push(cb); return this; }
+  // multi-peer (FFA): per-peer presence + the current roster of connected peers.
+  onPeer(fn) { this._t.onPeer && this._t.onPeer(fn); return this; }
+  onPeerGone(fn) { this._t.onPeerGone && this._t.onPeerGone(fn); return this; }
+  peers() { return this._t.peers ? this._t.peers() : []; }
   _emit(s) { this._stateCbs.forEach((f) => f(s)); }
   close() { try { this._t.close(); } catch (_) {} }
 }

@@ -124,32 +124,40 @@ export class Menus {
     this.clear();
     this.screen = 'pvp';
     this._pvpFrag = this._pvpFrag || 15;
+    this._pvpMode = this._pvpMode || 'ffa';
+    const modeLabel = (m) => m === 'teams' ? '2v2 Teams' : 'Free-for-All';
     this.el.innerHTML = `
       <div class="screen">
         <div class="title-block">
           <div class="game-sub" style="color:var(--ink)">Deathmatch</div>
-          <div class="game-tag">1v1, last marine standing scores. Same direct peer-to-peer link as co-op — no server.</div>
+          <div class="game-tag">Up to four players over the same direct peer-to-peer link as co-op — no server.</div>
         </div>
         <div class="menu-list">
+          <div class="setting-row" style="justify-content:center;gap:14px;border:0">
+            <label>Mode</label>
+            <button class="btn ghost" data-act="mode" style="display:inline-block;padding:7px 16px">${modeLabel(this._pvpMode)}</button>
+          </div>
           <div class="setting-row" style="justify-content:center;gap:14px;border:0">
             <label>Frag limit</label>
             <button class="btn ghost" data-act="frag" style="display:inline-block;padding:7px 16px">${this._pvpFrag}</button>
           </div>
           <button class="btn primary" data-act="host">🛰 Host Match</button>
           <div class="coop-join-row">
-            <input class="coop-code-input" data-field="code" placeholder="Enter a rival's code · e.g. WBL-AB3KD" maxlength="12" autocomplete="off" spellcheck="false" />
+            <input class="coop-code-input" data-field="code" placeholder="Enter a host's code · e.g. WBL-AB3KD" maxlength="12" autocomplete="off" spellcheck="false" />
             <button class="btn" data-act="join">Join</button>
           </div>
           <button class="btn ghost" data-act="back">← Back</button>
         </div>
-        <div class="menu-footer">Host picks the frag limit and shares the code; the rival picks <b>Join</b>. FFA &amp; 2v2 teams are on the way.</div>
+        <div class="menu-footer">Host picks mode + frag limit and shares the code; up to three rivals <b>Join</b>, then the host starts. 2v2 splits players into Blue/Red by join order.</div>
       </div>`;
+    const modeBtn = this.el.querySelector('[data-act="mode"]');
+    modeBtn.addEventListener('click', () => { this._click(); this._pvpMode = this._pvpMode === 'ffa' ? 'teams' : 'ffa'; modeBtn.textContent = modeLabel(this._pvpMode); });
     const fragBtn = this.el.querySelector('[data-act="frag"]');
     const fragOpts = [10, 15, 20, 30];
     fragBtn.addEventListener('click', () => { this._click(); this._pvpFrag = fragOpts[(fragOpts.indexOf(this._pvpFrag) + 1) % fragOpts.length]; fragBtn.textContent = this._pvpFrag; });
     const code = this.el.querySelector('[data-field="code"]');
     const doJoin = () => { const c = (code.value || '').trim().toUpperCase(); if (c) { this._click(); this.h.onPvpJoin && this.h.onPvpJoin(c); } };
-    this.el.querySelector('[data-act="host"]').addEventListener('click', () => { this._click(); this.h.onPvpHost && this.h.onPvpHost({ fragLimit: this._pvpFrag }); });
+    this.el.querySelector('[data-act="host"]').addEventListener('click', () => { this._click(); this.h.onPvpHost && this.h.onPvpHost({ fragLimit: this._pvpFrag, mode: this._pvpMode }); });
     this.el.querySelector('[data-act="join"]').addEventListener('click', doJoin);
     code.addEventListener('keydown', (e) => { if (e.code === 'Enter') { e.preventDefault(); doJoin(); } });
     this.el.querySelector('[data-act="back"]').addEventListener('click', () => { this._click(); this.showMain(); });

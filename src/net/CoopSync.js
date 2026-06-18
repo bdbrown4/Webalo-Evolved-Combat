@@ -112,7 +112,6 @@ export function serializeSnapshot(game) {
     hp: local ? [r2(local.pos.x), r2(local.pos.y), r2(local.pos.z), r3(local.yaw), Math.round(local.health), Math.round(local.shield), pstate(local), Math.ceil(local.bleedT), r2(local.reviveProg)] : null,
     gp: guest ? guestState(guest) : null,
     sv: sv ? [sv.wave, sv.score, sv.state, sv._live ? sv._live.filter((x) => !x.dead).length : 0] : null,
-    pvp: game._pvp ? [local ? (local._frags || 0) : 0, guest ? (guest._frags || 0) : 0, game._pvp.over ? 1 : 0] : null,
     ev: game._netEvents.length ? game._netEvents.splice(0) : null,
   };
 }
@@ -187,7 +186,6 @@ export function applySnapshot(game, snap) {
     if (game.player) { game.player.downed = !!snap.gp.downed; game.player.dead = !!snap.gp.dead; }
   }
   if (snap.sv) game._svNetState = snap.sv;
-  if (snap.pvp) game._pvpNetState = snap.pvp;
 
   // one-shot events (banners, telegraphs, explosions…)
   if (snap.ev) for (const ev of snap.ev) applyEvent(game, ev);
@@ -223,7 +221,7 @@ function applyEvent(game, ev) {
   else if (k === 'mcomplete') game._guestMissionComplete(ev[1]);
   else if (k === 'coopfail') game._showCoopFail(false);
   else if (k === 'frag') game.hud && game.hud.killFeed((ev[1] || '—') + ' ▸ ' + ev[2], ev[1] === '☠' ? 0x9aa7b3 : 0xff6a3d);
-  else if (k === 'pvpover') game._guestPvpOver(ev[1], ev[2], ev[3]);
+  else if (k === 'pvpover') game._guestPvpOver(ev[1], ev[2], ev[3], ev[4]);
   else if (k === 'mountveh') game._guestEnterGunner(ev[1]);
   else if (k === 'vfire') {                                    // co-op turret: the guest's own shot
     game._spawnTracer(new THREE.Vector3(ev[1], ev[2], ev[3]), new THREE.Vector3(ev[4], ev[5], ev[6]));
@@ -235,6 +233,60 @@ function applyEvent(game, ev) {
 export function clearGhosts(game) {
   if (game._ghosts) { for (const [, g] of game._ghosts) { game.scene.remove(g.mesh); disposeMesh(g.mesh); } game._ghosts.clear(); }
   if (game._projGhosts) { for (const [, pg] of game._projGhosts) { game.scene.remove(pg.mesh); disposeMesh(pg.mesh); } game._projGhosts.clear(); }
+}
+
+// ---- PvP (FFA / teams): an all-players snapshot ----------------------------
+// Unlike co-op (one host + one guest), a Deathmatch has up to four bodies and each
+// client renders every OTHER one. The host serializes EVERY player's state; each
+// guest picks out its own id for HUD and draws the rest as interpolated avatars.
+const PVP_COLORS = [0x3d7bd6, 0xff6a4a, 0x35c98f, 0xe8c84a];   // p0..p3 (FFA)
+const TEAM_COLORS = [0x3d7bd6, 0xff6a4a];                      // blue / red (2v2)
+export function pvpColor(teams, pid, team) { return teams ? TEAM_COLORS[(team || 0) % 2] : PVP_COLORS[pid % 4]; }
+
+export function serializePvpSnap(game) {
+  const P = [];
+  for (const p of game.players) {
+    if (!p) continue;
+    const w = p.weapon;
+    P.push([p._pid, r2(p.pos.x), r2(p.pos.y), r2(p.pos.z), r3(p.yaw), Math.round(p.health), Math.round(p.shield),
+      p.dead ? 1 : 0, p._team || 0, p._frags || 0, w ? w.name : '—', w ? w.ammo : 0, w ? w.reserve : 0,
+      p._respawnT != null ? Math.ceil(p._respawnT) : 0, p._pvpName, w ? w.reloading > 0 ? 1 : 0 : 0, w ? w.def.reticle : 'dot']);
+  }
+  return { P, over: game._pvp && game._pvp.over ? 1 : 0, ev: game._netEvents.length ? game._netEvents.splice(0) : null };
+}
+
+export function applyPvpSnap(game, snap) {
+  if (!game._pvpAvatars) game._pvpAvatars = new Map();
+  const seen = game._pvpSeen || (game._pvpSeen = new Set()); seen.clear();
+  const board = [];
+  for (const a of snap.P) {
+    const pid = a[0]; seen.add(pid);
+    board.push({ pid, team: a[8], frags: a[9], name: a[14] });
+    if (pid === game._myId) {
+      game._pvpMe = { health: a[5], shield: a[6], dead: a[7], team: a[8], frags: a[9], weapon: a[10], ammo: a[11], reserve: a[12], respawnT: a[13], name: a[14], reloading: !!a[15], reticle: a[16] };
+      continue;
+    }
+    let av = game._pvpAvatars.get(pid);
+    if (!av) { const mesh = game._makeBuddyAvatar(pvpColor(game._pvp && game._pvp.teams, pid, a[8])); game.scene.add(mesh); av = { mesh, buf: [] }; game._pvpAvatars.set(pid, av); }
+    av.dead = a[7]; av.mesh.visible = !a[7];
+    pushSample(av.buf, game._netClock || 0, a[1], a[2], a[3], a[4]);
+  }
+  for (const [pid, av] of game._pvpAvatars) if (!seen.has(pid)) { game.scene.remove(av.mesh); disposeMesh(av.mesh); game._pvpAvatars.delete(pid); }
+  game._pvpBoard = board;
+  if (snap.over) game._pvp && (game._pvp.over = true);
+  if (snap.ev) for (const ev of snap.ev) applyEvent(game, ev);
+}
+
+export function interpPvp(game, dt) {
+  if (!game._pvpAvatars) return;
+  const rt = (game._netClock || 0) - INTERP_DELAY;
+  for (const [, av] of game._pvpAvatars) {
+    if (av.buf && av.buf.length) { const s = sampleAt(av.buf, rt); av.mesh.position.set(s.x, s.y, s.z); av.mesh.rotation.y = s.f; }
+  }
+}
+
+export function clearPvpAvatars(game) {
+  if (game._pvpAvatars) { for (const [, av] of game._pvpAvatars) { game.scene.remove(av.mesh); disposeMesh(av.mesh); } game._pvpAvatars.clear(); }
 }
 
 function disposeMesh(m) {

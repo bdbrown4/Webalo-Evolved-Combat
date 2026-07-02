@@ -15,6 +15,8 @@ export const WEAPONS = {
     damage: 12, headshotMult: 1.7, fireRate: 11, auto: true,
     magazine: 40, reserve: 240, reloadTime: 1.7, spread: 0.022, range: 90,
     adsZoom: 1.35, sfx: 'rifle', reticle: 'cross',
+    // ADS-fire: a disciplined 3-round volley — tight, harder-hitting, slower cadence
+    alt: { name: 'BURST', pellets: 3, spread: 0.006, damage: 10, headshotMult: 1.9, fireRate: 2.4, ammoCost: 3 },
   },
   goocaster: {
     name: 'Type-G Goocaster', model: 'goocaster', mode: 'projectile', projectile: 'goo',

@@ -22,7 +22,19 @@ export class Menus {
     this.screen = null;
   }
 
-  _click() { this.audio.ensure(); this.audio.sfx('ui'); }
+  _click() { this.audio.ensure(); this.audio.sfx('ui'); this.audio.menuMusic(); }
+
+  // Small transient notice (bottom-centre) — rebind conflicts, invalid codes.
+  _toast(text) {
+    if (this._toastEl) this._toastEl.remove();
+    const t = document.createElement('div');
+    t.className = 'gp-toast show';
+    t.textContent = text;
+    document.body.appendChild(t);
+    this._toastEl = t;
+    clearTimeout(this._toastTimer);
+    this._toastTimer = setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); }, 2400);
+  }
 
   // Footer controls hint, matched to the active input device (touch / gamepad /
   // keyboard). pollGamepad runs every frame regardless of state, so _gpActive is
@@ -108,7 +120,7 @@ export class Menus {
         <div class="menu-footer">Co-op plays the whole campaign together — the host leads mission to mission, the guest follows. Direct peer-to-peer; no account, no server. Co-op progress isn't saved to your solo campaign.</div>
       </div>`;
     const code = this.el.querySelector('[data-field="code"]');
-    const doJoin = () => { const c = (code.value || '').trim().toUpperCase(); if (c) { this._click(); this.h.onCoopJoin && this.h.onCoopJoin(c, 'campaign'); } };
+    const doJoin = () => { const c = (code.value || '').trim().toUpperCase(); if (!c) { this._toast('Enter the host\'s room code first (e.g. WBL-AB3KD)'); code.focus(); return; } this._click(); this.h.onCoopJoin && this.h.onCoopJoin(c, 'campaign'); };
     this.el.querySelector('[data-act="solo"]').addEventListener('click', () => { this._click(); this.showIntro(() => this.h.onStart(0)); });
     this.el.querySelector('[data-act="host"]').addEventListener('click', () => { this._click(); this.h.onCoopHost && this.h.onCoopHost('campaign'); });
     this.el.querySelector('[data-act="join"]').addEventListener('click', doJoin);
@@ -162,7 +174,7 @@ export class Menus {
     const fragOpts = [10, 15, 20, 30];
     fragBtn.addEventListener('click', () => { this._click(); this._pvpFrag = fragOpts[(fragOpts.indexOf(this._pvpFrag) + 1) % fragOpts.length]; fragBtn.textContent = this._pvpFrag; });
     const code = this.el.querySelector('[data-field="code"]');
-    const doJoin = () => { const c = (code.value || '').trim().toUpperCase(); if (c) { this._click(); this.h.onPvpJoin && this.h.onPvpJoin(c); } };
+    const doJoin = () => { const c = (code.value || '').trim().toUpperCase(); if (!c) { this._toast('Enter the host\'s room code first (e.g. WBL-AB3KD)'); code.focus(); return; } this._click(); this.h.onPvpJoin && this.h.onPvpJoin(c); };
     this.el.querySelector('[data-act="host"]').addEventListener('click', () => { this._click(); this.h.onPvpHost && this.h.onPvpHost({ fragLimit: this._pvpFrag, mode: this._pvpMode }); });
     this.el.querySelector('[data-act="join"]').addEventListener('click', doJoin);
     code.addEventListener('keydown', (e) => { if (e.code === 'Enter') { e.preventDefault(); doJoin(); } });
@@ -334,6 +346,7 @@ export class Menus {
 
   showCredits() {
     this.clear();
+    this.screen = 'credits';
     this.el.innerHTML = `
       <div class="screen">
         <div class="panel" style="max-width:560px">
@@ -374,7 +387,7 @@ export class Menus {
         <div class="menu-footer">Co-op is direct peer-to-peer — no account, no server. Host shares the code; the other player picks <b>Join</b> and enters it.</div>
       </div>`;
     const code = this.el.querySelector('[data-field="code"]');
-    const doJoin = () => { const c = (code.value || '').trim().toUpperCase(); if (c) { this._click(); this.h.onCoopJoin && this.h.onCoopJoin(c, 'survival'); } };
+    const doJoin = () => { const c = (code.value || '').trim().toUpperCase(); if (!c) { this._toast('Enter the host\'s room code first (e.g. WBL-AB3KD)'); code.focus(); return; } this._click(); this.h.onCoopJoin && this.h.onCoopJoin(c, 'survival'); };
     this.el.querySelector('[data-act="solo"]').addEventListener('click', () => { this._click(); this.h.onSurvival && this.h.onSurvival(); });
     this.el.querySelector('[data-act="host"]').addEventListener('click', () => { this._click(); this.h.onCoopHost && this.h.onCoopHost('survival'); });
     this.el.querySelector('[data-act="join"]').addEventListener('click', doJoin);
@@ -407,6 +420,7 @@ export class Menus {
   showMissionSelect() {
     const p = loadProgress();
     this.clear();
+    this.screen = 'select';
     this.el.innerHTML = `
       <div class="screen">
         <div class="title-block"><div class="game-sub" style="color:var(--ink)">Mission Select</div></div>
@@ -433,6 +447,7 @@ export class Menus {
   showSettings(tab, onBack, { fromPause = false } = {}) {
     this._settingsBack = onBack;
     this.clear();
+    this.screen = 'settings';
     this.el.innerHTML = `
       <div class="screen">
         <div class="panel">
@@ -451,7 +466,21 @@ export class Menus {
         </div>
       </div>`;
     this.el.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => { this._click(); this._renderTab(t.dataset.tab); }));
-    this.el.querySelector('[data-act="reset"]').addEventListener('click', () => { this._click(); this.settings.reset(); this._renderTab(this._curTab); });
+    this.el.querySelector('[data-act="reset"]').addEventListener('click', (e) => {
+      this._click();
+      const b = e.currentTarget;
+      // one accidental click (or controller A-press) shouldn't wipe a custom
+      // layout — arm on the first press, reset on the second within 3s
+      if (!this._resetArmed) {
+        this._resetArmed = true;
+        b.textContent = 'Really reset EVERYTHING?';
+        setTimeout(() => { this._resetArmed = false; if (b.isConnected) b.textContent = 'Reset to Defaults'; }, 3000);
+        return;
+      }
+      this._resetArmed = false;
+      this.settings.reset();
+      this._renderTab(this._curTab);
+    });
     this.el.querySelector('[data-act="back"]').addEventListener('click', () => { this._click(); this.input.cancelRebind(); onBack && onBack(); });
     this._renderTab(tab || 'controls');
   }
@@ -510,8 +539,13 @@ export class Menus {
   }
 
   _renderControls(body) {
+    // look feel first — players hunting for sensitivity look here, not in Video
+    body.appendChild(this._row('Mouse Sensitivity', '', this._slider('mouse.sensitivity', 0.2, 3, 0.05, (v) => parseFloat(v).toFixed(2))));
+    body.appendChild(this._row('ADS Sensitivity', 'Look speed while aiming', this._slider('mouse.adsScale', 0.2, 1, 0.05, (v) => parseFloat(v).toFixed(2))));
+    body.appendChild(this._row('Controller Sensitivity', 'Right-stick look speed (gamepad)', this._slider('mouse.padSensitivity', 0.3, 2.0, 0.05, (v) => parseFloat(v).toFixed(2))));
+    body.appendChild(this._row('Invert Y Axis', '', this._toggle('mouse.invertY')));
     const note = document.createElement('div');
-    note.className = 'hint'; note.style.margin = '0 0 8px';
+    note.className = 'hint'; note.style.margin = '10px 0 8px';
     note.textContent = 'Click a binding, then press any key or mouse button. Esc cancels.';
     body.appendChild(note);
     ACTIONS.forEach((a) => {
@@ -561,10 +595,7 @@ export class Menus {
   _renderVideo(body) {
     body.appendChild(this._row('Graphics Quality', 'Shadows, pixel ratio, draw distance', this._select('video.quality', ['low', 'medium', 'high'])));
     body.appendChild(this._row('Field of View', '', this._slider('video.fov', 60, 110, 1, (v) => v + '°')));
-    body.appendChild(this._row('Mouse Sensitivity', '', this._slider('mouse.sensitivity', 0.2, 3, 0.05, (v) => parseFloat(v).toFixed(2))));
-    body.appendChild(this._row('ADS Sensitivity', 'Look speed while aiming', this._slider('mouse.adsScale', 0.2, 1, 0.05, (v) => parseFloat(v).toFixed(2))));
-    body.appendChild(this._row('Controller Sensitivity', 'Right-stick look speed (gamepad)', this._slider('mouse.padSensitivity', 0.3, 2.0, 0.05, (v) => parseFloat(v).toFixed(2))));
-    body.appendChild(this._row('Invert Y Axis', '', this._toggle('mouse.invertY')));
+    body.appendChild(this._row('HUD Size', 'Scale the in-game readouts', this._slider('gameplay.hudScale', 0.85, 1.3, 0.05, (v) => Math.round(v * 100) + '%')));
     body.appendChild(this._row('Dynamic Shadows', '', this._toggle('video.shadows')));
     body.appendChild(this._row('Bloom / Glow', 'Soft glow on bright lights and projectiles', this._toggle('video.bloom')));
     body.appendChild(this._row('Motion Tracker', '', this._toggle('video.motionTracker')));
@@ -582,6 +613,12 @@ export class Menus {
     sel.addEventListener('change', () => { this._click(); this.settings.set('difficulty', sel.value); upd(); });
     body.appendChild(this._row('Difficulty', 'Scales enemy health and the damage you take', sel));
     body.appendChild(blurb);
+    body.appendChild(this._row('Aim Assist', 'Gentle magnetism for touch + controller (never mouse)', this._select('gameplay.aimAssist', ['auto', 'off', 'low', 'high'])));
+    body.appendChild(this._row('Reduced Flash', 'Calmer damage flash (photosensitivity)', this._toggle('gameplay.reducedFlash')));
+    body.appendChild(this._row('Haptics', 'Controller rumble / phone vibration on damage', this._toggle('gameplay.haptics')));
+    if (document.documentElement.classList.contains('touch')) {
+      body.appendChild(this._row('Left-Handed Layout', 'Mirror the touch controls', this._toggle('gameplay.leftHanded')));
+    }
   }
 
   // ---------------- Pause ----------------

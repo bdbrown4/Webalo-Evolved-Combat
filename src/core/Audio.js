@@ -14,6 +14,13 @@ export class Audio {
     this._music = null;
     this._track = null;
     settings.onChange(() => this._applyVolumes());
+    // Mobile browsers suspend the context when the tab backgrounds (or a call comes
+    // in); without this, the game returns SILENT until the next menu click.
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && this.ctx && this.ctx.state === 'suspended') this.ctx.resume();
+      });
+    }
   }
 
   // Must be called from a user gesture (click) to satisfy autoplay policy.
@@ -134,7 +141,12 @@ export class Audio {
     if (!cfg) return;
 
     const t0 = this.ctx.currentTime;
-    const out = this.ctx.createGain(); out.gain.value = cfg.peak; out.connect(this.musicGain);
+    // ramp the new bed IN over half a second — starting at full gain was an audible
+    // click, overlapping dissonantly with the old bed's 0.6s fade-out
+    const out = this.ctx.createGain();
+    out.gain.setValueAtTime(0.0001, t0);
+    out.gain.exponentialRampToValueAtTime(cfg.peak, t0 + 0.5);
+    out.connect(this.musicGain);
     const lpf = this.ctx.createBiquadFilter(); lpf.type = 'lowpass'; lpf.frequency.value = cfg.lp; lpf.Q.value = 6;
     lpf.connect(out);
     const lfo = this.ctx.createOscillator(); lfo.frequency.value = cfg.rate;
@@ -162,4 +174,8 @@ export class Audio {
   }
 
   stopAll() { this._track = null; this._stopMusic(); }
+
+  // Quiet ambient bed for the menus — called from any menu click, so it starts
+  // with the first user gesture (autoplay policy) and never stacks.
+  menuMusic() { if (this.ctx && !this._track) this.setTrack('ambient'); }
 }

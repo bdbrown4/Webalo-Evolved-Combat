@@ -155,7 +155,9 @@ export function applySnapshot(game, snap) {
     g.dead = a[6]; g.deathT = a[7];
     pushSample(g.buf, game._netClock || 0, a[2], a[3], a[4], a[5]);
   }
-  for (const [id, g] of game._ghosts) { if (!seen.has(id)) { game.scene.remove(g.mesh); disposeMesh(g.mesh); game._ghosts.delete(id); } }
+  // ghost meshes are clones of the shared enemy templates — REMOVE but never
+  // dispose (their geometries/materials are owned by the AssetFactory cache)
+  for (const [id, g] of game._ghosts) { if (!seen.has(id)) { game.scene.remove(g.mesh); game._ghosts.delete(id); } }
 
   // projectiles
   const pseen = game._pseenScratch || (game._pseenScratch = new Set());
@@ -167,7 +169,7 @@ export function applySnapshot(game, snap) {
     if (!pg) { const mesh = AssetFactory.projectileMesh(a[1]); mesh.position.set(a[2], a[3], a[4]); game.scene.add(mesh); pg = { mesh, buf: [] }; game._projGhosts.set(id, pg); }
     pushSample(pg.buf, game._netClock || 0, a[2], a[3], a[4], 0);
   }
-  for (const [id, pg] of game._projGhosts) { if (!pseen.has(id)) { game.scene.remove(pg.mesh); disposeMesh(pg.mesh); game._projGhosts.delete(id); } }
+  for (const [id, pg] of game._projGhosts) { if (!pseen.has(id)) { game.scene.remove(pg.mesh); game._projGhosts.delete(id); } }
 
   // host avatar (the buddy from the guest's POV) + the host's down/bleed/revive state
   if (snap.hp) {
@@ -222,6 +224,8 @@ function applyEvent(game, ev) {
   else if (k === 'coopfail') game._showCoopFail(false);
   else if (k === 'frag') game.hud && game.hud.killFeed((ev[1] || '—') + ' ▸ ' + ev[2], ev[1] === '☠' ? 0x9aa7b3 : 0xff6a3d);
   else if (k === 'pvpover') game._guestPvpOver(ev[1], ev[2], ev[3], ev[4]);
+  else if (k === 'pkt') game._pvpPadNet(ev[1], true);        // deathmatch pad taken
+  else if (k === 'pkr') game._pvpPadNet(ev[1], false);       // deathmatch pad respawned
   else if (k === 'mountveh') game._guestEnterGunner(ev[1]);
   else if (k === 'vfire') {                                    // co-op turret: the guest's own shot
     game._spawnTracer(new THREE.Vector3(ev[1], ev[2], ev[3]), new THREE.Vector3(ev[4], ev[5], ev[6]));
@@ -231,8 +235,9 @@ function applyEvent(game, ev) {
 }
 
 export function clearGhosts(game) {
-  if (game._ghosts) { for (const [, g] of game._ghosts) { game.scene.remove(g.mesh); disposeMesh(g.mesh); } game._ghosts.clear(); }
-  if (game._projGhosts) { for (const [, pg] of game._projGhosts) { game.scene.remove(pg.mesh); disposeMesh(pg.mesh); } game._projGhosts.clear(); }
+  // remove only — ghost geometries/materials are shared with the asset caches
+  if (game._ghosts) { for (const [, g] of game._ghosts) game.scene.remove(g.mesh); game._ghosts.clear(); }
+  if (game._projGhosts) { for (const [, pg] of game._projGhosts) game.scene.remove(pg.mesh); game._projGhosts.clear(); }
 }
 
 // ---- PvP (FFA / teams): an all-players snapshot ----------------------------

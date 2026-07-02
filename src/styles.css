@@ -824,3 +824,41 @@ html.touch .crawl-skip { padding: 12px 22px; font-size: 15px; }
 .pvp-teams .pt.mine { text-decoration: underline; text-underline-offset: 4px; }
 .pvp-teams .pvp-sep { opacity: 0.5; margin: 0 10px; color: var(--ink-dim); }
 .pvp-roster { margin: 4px 0 10px; font-size: 13px; line-height: 1.7; color: var(--ink); background: rgba(8,16,22,0.5); border: 1px solid var(--panel-edge); border-radius: 8px; padding: 8px 14px; }
+
+/* ---------- Touch: utility cluster (crouch / grenade type / flashlight) ---------- */
+.tc-util {
+  position: absolute;
+  left: calc(12px + env(safe-area-inset-left)); top: 50%; transform: translateY(-110%);
+  display: flex; flex-direction: column; gap: 10px;
+}
+/* Left-handed mirror: swap the stick and the button clusters */
+.touch-controls.lefty .tc-look { right: auto; left: 0; }
+.touch-controls.lefty .tc-move { left: auto; right: 0; }
+.touch-controls.lefty .tc-fire { right: auto; left: calc(18px + env(safe-area-inset-left)); }
+.touch-controls.lefty .tc-right2 { right: auto; left: calc(124px + env(safe-area-inset-left)); }
+.touch-controls.lefty .tc-actions { right: auto; left: calc(200px + env(safe-area-inset-left)); }
+.touch-controls.lefty .tc-util { left: auto; right: calc(12px + env(safe-area-inset-right)); }
+.touch-controls.lefty .tc-pause { left: auto; right: calc(12px + env(safe-area-inset-right)); }
+
+/* ---------- Accessibility: reduced flash ---------- */
+#damage-flash.reduced { transition: box-shadow .25s; }
+#damage-flash.reduced.lowshield { animation: none; }
+
+/* ---------- Directional damage indicator ---------- */
+#dmg-dir {
+  position: absolute; left: 50%; top: 50%; width: 120px; height: 120px;
+  margin: -60px 0 0 -60px; pointer-events: none; opacity: 0;
+}
+#dmg-dir.show { opacity: 1; }
+#dmg-dir .dd-arc {
+  position: absolute; left: 50%; top: 0; width: 44px; height: 14px; margin-left: -22px;
+  border-radius: 50% 50% 0 0 / 100% 100% 0 0;
+  border-top: 4px solid rgba(255,70,70,0.9);
+  filter: drop-shadow(0 0 6px rgba(255,60,60,0.8));
+}
+
+/* boss shield track (thin, above the health fill) */
+#boss-bar .bb-strack { height: 5px; margin-bottom: 3px; background: rgba(10,20,28,0.8); border: 1px solid rgba(95,208,230,0.5); border-radius: 3px; overflow: hidden; }
+#boss-bar .bb-sfill { height: 100%; width: 100%; background: linear-gradient(90deg, #4fb7d0, #9fe8ff); }
+/* dual grenade readout: the unselected type sits dim */
+.nades .dim { opacity: 0.5; }

@@ -42,6 +42,13 @@ const DEFAULTS = {
   audio: { master: 0.8, sfx: 0.9, music: 0.5 },
   video: { quality: 'high', fov: 80, shadows: true, bloom: true, motionTracker: true, viewBob: true },
   difficulty: 'trooper',
+  gameplay: {
+    aimAssist: 'auto',     // 'off' | 'low' | 'high' | 'auto' (auto = on for touch + pad, off for mouse)
+    reducedFlash: false,   // tame the full-screen damage flash (photosensitivity)
+    hudScale: 1.0,         // 0.85–1.3 multiplier on HUD text/element size
+    leftHanded: false,     // mirror the touch layout
+    haptics: true,         // pad rumble / phone vibration on damage
+  },
 };
 
 function deepClone(o) { return JSON.parse(JSON.stringify(o)); }

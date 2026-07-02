@@ -23,7 +23,7 @@ function rng(seed) {
   let s = (seed >>> 0) || 1;
   return () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
 }
-function pick(rnd, arr) { return arr[Math.floor(rnd() * arr.length)]; }
+
 function pickSome(rnd, arr, n) {
   const pool = arr.slice(), out = [];
   for (let i = 0; i < n && pool.length; i++) out.push(pool.splice(Math.floor(rnd() * pool.length), 1)[0]);

@@ -48,6 +48,11 @@ function detectTouch() {
   return coarse || (noHover && hasTouch);
 }
 
+// Shared FX geometries: goo blobs / impact pips / explosion shells spawn dozens
+// of times a second in a big wave — one unit sphere each, scaled per mesh, and
+// flagged shared so the FX reaper doesn't dispose them out from under the next one.
+const FX_SPHERE = new THREE.SphereGeometry(1, 8, 6); FX_SPHERE.userData.shared = true;
+
 // PvP: seconds of spawn protection on (re)spawn. Drops early the moment a player
 // fires (Player._fire), so it shields against spawn-camping without enabling it.
 const PVP_SPAWN_INVULN = 2.5;
@@ -136,7 +141,7 @@ export class Game {
     this.isTouch = detectTouch();
     if (this.isTouch) document.documentElement.classList.add('touch');
     this.touch = this.isTouch
-      ? new TouchControls(root, this.input, { onPause: () => { if (this.state === 'playing') this.togglePause(); } })
+      ? new TouchControls(root, this.input, { onPause: () => { if (this.state === 'playing') this.togglePause(); } }, settings)
       : null;
 
     this._bindResize();
@@ -387,12 +392,14 @@ export class Game {
     this.players = [];
     clearGhosts(this);
     this._clearVehGhost();
+    if (this._pvpPads) { for (const pad of this._pvpPads) this.scene.remove(pad.mesh); this._pvpPads = null; }
     this._pvp = null; this._pvpNetState = null; this._clearPvpHud();
     clearPvpAvatars(this); this._pvpMe = null; this._pvpBoard = null; this._pvpGuests = null; this._myId = null;
     this._clearCoopHud();
     if (this._hostAvatar) { this.scene.remove(this._hostAvatar); this._hostAvatar = null; }
     if (this._svHudEl) { this._svHudEl.remove(); this._svHudEl = null; }
     this._guestNetState = null; this._svNetState = null; this._guestPlayer = null; this._netEvents.length = 0;
+    this._lastGuestVitals = null;   // fresh world = fresh vitals baseline (a rebuild is not "damage")
     this._hostState = null; this._coopOver = false;
     this._clearNadeModel();
     this._clearMeleeModel();
@@ -421,6 +428,9 @@ export class Game {
         combatTargets: (shooter) => this._combatTargets(shooter),
         // co-op campaign: hold room-clear/advance while a squadmate is down (revive first).
         squadHeld: () => this._coopSquadHeld(),
+        // melee attack tokens: at most 3 swarmers press the attack on one player per
+        // frame — the rest circle at reach (Enemy._melee). Counters reset per frame.
+        meleeToken: (target) => { if (!target) return true; const n = target._meleeSlots || 0; if (n >= 3) return false; target._meleeSlots = n + 1; return true; },
         _g: this,
         spawnEnemy: (type, pos) => { const e = new Enemy(type, pos); this._scaleEnemy(e); this.enemies.push(e); this.scene.add(e.mesh); return e; },
         requestSpawn: (type, n, near) => { const cap = 28; for (let i = 0; i < n && this.enemies.filter((x) => !x.dead).length < cap; i++) { const p = near.clone().add(new THREE.Vector3((Math.random() - 0.5) * 6, 0, (Math.random() - 0.5) * 6)); const e = new Enemy(type, p); this._scaleEnemy(e); this.enemies.push(e); this.scene.add(e.mesh); if (this.level) { const r = this.level.segments[this.level.activeIndex]; if (r) r.enemies.push(e); } } },
@@ -625,7 +635,18 @@ export class Game {
     this._coopOver = false; this._coopLeft = false;
     this._runPerks = []; this._guestRunPerks = []; this._pendingGuestPerk = null; this._hostPendingPerk = null;
     this.missionIndex = 0; this._lastEscPush = null;
-    net.on('input', (pkt) => { if (this._guestPlayer && this._guestPlayer._netInput) this._guestPlayer._netInput.feed(pkt); });
+    // co-op is exactly TWO players. Bind to the first peer; if anyone else wanders
+    // into the room code, ignore their input and tell them the session is full
+    // (without this, a 3rd player's inputs would merge into the one guest body).
+    this._coopPeerId = net.peers()[0] || null;
+    net.onPeer((id) => {
+      if (this._coopPeerId == null) this._coopPeerId = id;
+      else if (id !== this._coopPeerId) net.send('full', 1, id);
+    });
+    net.on('input', (pkt, peerId) => {
+      if (peerId !== undefined && this._coopPeerId !== null && peerId !== this._coopPeerId) return;
+      if (this._guestPlayer && this._guestPlayer._netInput) this._guestPlayer._netInput.feed(pkt);
+    });
     net.on('retryReq', () => { if (this._coopOver) this._coopRetry(); });
     net.on('guestPerk', (id) => { this._pendingGuestPerk = id; });        // campaign: guest's between-mission pick
     net.onState((s) => { if (s === 'closed') this._onPeerLeft(); });
@@ -668,7 +689,22 @@ export class Game {
     this._coopOver = false; this._coopLeft = false;
     net.on('start', (d) => this._beginCoopGuest(d));
     net.on('snap', (snap) => { this._lastSnap = snap; applySnapshot(this, snap); });
+    net.on('full', () => this._coopFullNotice());
     net.onState((s) => { if (s === 'closed') this._onPeerLeft(); });
+  }
+
+  // This room already has its players — tell the late joiner and offer the exit.
+  _coopFullNotice() {
+    if (this.level) return;                      // already playing — not us (defensive)
+    this._coopClearTimers();
+    const net = this.net; this.net = null; this.coopRole = null;
+    if (net) { try { net.close(); } catch (e) { /* gone */ } }
+    if (this._pendingNet) { try { this._pendingNet.close(); } catch (e) { /* gone */ } this._pendingNet = null; }
+    const el = this._showCoopOverlay(`
+      <div class="coop-title">Session Full</div>
+      <div class="coop-sub" style="text-align:center">That room already has its players. Ask the host for a fresh code, or start your own.</div>
+      <button class="btn ghost" data-act="back">← Back</button>`);
+    el.querySelector('[data-act="back"]').addEventListener('click', () => { this._clearCoopOverlay(); this.onQuit && this.onQuit(); });
   }
 
   _beginCoopGuest(d) {
@@ -1060,7 +1096,7 @@ export class Game {
     if (scoped !== this._scoped) { this._scoped = scoped; this.audio.sfx(scoped ? 'scopein' : 'scopeout'); }
 
     interpolateGhosts(this, dt);   // update ghost/host-avatar/vehicle positions before we ride them
-    if (this._pvp) interpPvp(this, dt);   // every other player's avatar
+    if (this._pvp) { interpPvp(this, dt); this._pvpAnimatePads(dt); }   // avatars + pads
     // PvP: the host owns our life. While dead we freeze (respawn overlay); on the
     // dead→alive edge we snap to our spawn (the host has already moved us there).
     const pvpDead = !!(this._pvp && this._pvpMe && this._pvpMe.dead);
@@ -1117,6 +1153,23 @@ export class Game {
     }
   }
 
+  // GUEST: the host owns our vitals, so "being shot" only shows up as the snapshot's
+  // health/shield dropping — turn that drop back into the flash + hurt/shield sfx a
+  // local hit would have made. Regen/revive RAISE vitals, so rises never trigger it.
+  _guestDamageFeedback(health, shield) {
+    const prev = this._lastGuestVitals;
+    this._lastGuestVitals = { h: health, s: shield };
+    if (!prev) return false;
+    const drop = (prev.h - health) + (prev.s - shield);
+    if (drop < 0.5) return false;
+    this.audio.sfx(prev.s > 0 && shield <= 0 ? 'shieldbreak' : shield > 0 ? 'shieldhit' : 'hurt');
+    if (this.settings.data.gameplay && this.settings.data.gameplay.haptics) {
+      this.input.rumble(0.5, 130);
+      if (this.isTouch && navigator.vibrate) { try { navigator.vibrate(40); } catch (e) {} }
+    }
+    return true;   // caller sets hs.hitFlash for this frame
+  }
+
   _updateGuestHud(dt, scoped) {
     const gp = this._guestNetState;
     let hs;
@@ -1152,6 +1205,9 @@ export class Game {
       dmgSfx: null, hitFlash: false, lowShield: gp.shield <= 0 && gp.health < gp.healthMax * 0.5,
       scoped, scopeZoom: scoped && this.player.weapon ? this.player.weapon.def.adsZoom : 0, driving: false,
     } : this.player.hudState();
+    // vitals drop → flash + sfx (the host owns damage; we reconstruct the feel)
+    if (this._pvp && this._pvpMe) hs.hitFlash = this._guestDamageFeedback(this._pvpMe.health, this._pvpMe.shield) || hs.hitFlash;
+    else if (gp) hs.hitFlash = this._guestDamageFeedback(gp.health, gp.shield) || hs.hitFlash;
     const ghostEnemies = [];
     for (const [, g] of this._ghosts) if (!g.dead) ghostEnemies.push({ pos: g.mesh.position });
     this.hud.update(dt, hs, ghostEnemies, this.player);
@@ -1262,6 +1318,64 @@ export class Game {
     return out;
   }
 
+  // Weapon/health pads for Deathmatch: fixed, symmetric spots in the seeded arena.
+  // Both sides build the same pads; the HOST owns pickup/respawn state and mirrors
+  // it with pkt/pkr events, so map control is real (everyone starts rifle+pistol —
+  // the power weapons are ON the map).
+  _pvpBuildPads() {
+    const r = (this.level && this.level.segments[0]) || { cx: 0, cz: 0, w: 30, d: 40 };
+    const defs = [
+      { id: 0, type: 'health', x: r.cx, z: r.cz },
+      { id: 1, type: 'weapon', weapon: 'goocaster', x: r.cx - r.w * 0.3, z: r.cz },
+      { id: 2, type: 'weapon', weapon: 'boomstick', x: r.cx + r.w * 0.3, z: r.cz },
+    ];
+    this._pvpPads = defs.map((d) => {
+      const mesh = AssetFactory.pickup(d.type, d.weapon);
+      mesh.position.set(d.x, 0.9, d.z);
+      this.scene.add(mesh);
+      return { ...d, mesh, taken: false, respawnT: 0 };
+    });
+  }
+
+  // spin the pad diamonds (host + guest, every frame)
+  _pvpAnimatePads(dt) {
+    if (!this._pvpPads) return;
+    for (const pad of this._pvpPads) { pad.mesh.rotation.y += dt * 1.5; if (pad.mesh.userData.spin) pad.mesh.userData.spin.rotation.x += dt * 2; }
+  }
+
+  // HOST: resolve pad pickups + respawns (20s), mirroring state to guests.
+  _pvpUpdatePads(dt) {
+    if (!this._pvpPads) return;
+    for (const pad of this._pvpPads) {
+      if (pad.taken) {
+        pad.respawnT -= dt;
+        if (pad.respawnT <= 0) { pad.taken = false; pad.mesh.visible = true; this._netPush('pkr', pad.id); }
+        continue;
+      }
+      for (const p of this.players) {
+        if (!p || p.dead || p.downed) continue;
+        if (p.pos.distanceToSquared(pad.mesh.position) > 1.6 * 1.6) continue;
+        if (pad.type === 'health') {
+          if (p.health >= p.healthMax) continue;          // full — leave it for someone who needs it
+          p.addHealth(30);
+        } else p.giveWeapon(pad.weapon);
+        pad.taken = true; pad.respawnT = 20; pad.mesh.visible = false;
+        this.audio.sfx('pickup');
+        this._netPush('pkt', pad.id);
+        if (p === this.player) this.hud.banner(pad.type === 'health' ? '+30 HEALTH' : 'PICKED UP', pad.type === 'health' ? '' : pad.weapon.toUpperCase(), 0.9);
+        break;
+      }
+    }
+  }
+
+  // GUEST: a pad event from the host (taken / respawned).
+  _pvpPadNet(id, taken) {
+    const pad = this._pvpPads && this._pvpPads.find((x) => x.id === id);
+    if (!pad) return;
+    pad.taken = taken; pad.mesh.visible = !taken;
+    if (taken) this.audio.sfx('pickup');
+  }
+
   // Up to four spawns at the arena corners, each facing the centre.
   _pvpSpawns(n) {
     const r = (this.level && this.level.segments[0]) || { cx: 0, cz: 0, w: 30, d: 40 };
@@ -1300,6 +1414,7 @@ export class Game {
   startPvpHost(net) {
     this.net = net; this.coopRole = 'host';
     this._coopOver = false; this._coopLeft = false;
+    this._lobbyClosed = true;                            // late joiners get 'full', not a seat
     this._pvpPeers = (this._lobbyPeers || []).slice();   // peers gathered in the lobby
     net.on('input', (pkt, peerId) => { const g = this._pvpGuests && this._pvpGuests.get(peerId); if (g && g._netInput) g._netInput.feed(pkt); });
     net.on('rematchReq', () => { if (this._pvp && this._pvp.over) this._pvpBuild(); });
@@ -1332,11 +1447,13 @@ export class Game {
       const g = this.addRemotePlayer(sp[pid], { color: pvpColor(teams, pid, team), id: 'p' + pid, weapons: ['rifle', 'pistol'] });
       g._netInput = new NetInputProxy();
       this._pvpArm(g, sp[pid], pid, team, teams ? `${team === 0 ? 'Blue' : 'Red'} ${Math.ceil(pid / 2)}` : 'P' + (pid + 1));
+      g._peerId = peerId;                    // so host→guest unicasts (respawn) can find them
       this._pvpGuests.set(peerId, g);
       this.net.send('start', { seed: this._levelSeed, mode: this._pvp.mode, fragLimit: this._pvp.fragLimit,
         myId: pid, team, players: peers.length + 1,
         spawn: { x: sp[pid].x, y: sp[pid].y, z: sp[pid].z, yaw: sp[pid].yaw } }, peerId);
     });
+    this._pvpBuildPads();
     this._ensurePvpHud();
     this.hud.banner(teams ? 'TEAM DEATHMATCH' : this._pvp.mode === 'duel' ? 'DUEL' : 'FREE-FOR-ALL', `First to ${this._pvp.fragLimit} frags${teams ? ' (team total)' : ''}.`, 2.6);
   }
@@ -1362,6 +1479,11 @@ export class Game {
       this.player._syncCamera(this.settings, 0);
       this.input.clearTransient();                  // don't carry a death-frame press into the respawn
       this.hud.banner('RESPAWN', 'Spawn shield up — fire to drop it.', 1.4);
+    } else if (p._peerId && this.net) {
+      // tell the guest WHERE it respawned — guests are movement-authoritative and
+      // snap themselves on the dead→alive edge, so without this they'd snap back
+      // to their original corner and instantly override the host's pick.
+      this.net.send('respawn', { x: s.x, y: s.y, z: s.z, yaw: s.yaw || 0 }, p._peerId);
     }
     if (p._avatar) p._avatar.visible = true;
   }
@@ -1371,8 +1493,12 @@ export class Game {
   // HOST: deaths → frags → respawns → win. Runs each frame while a match is live.
   _pvpUpdate(dt) {
     if (!this._pvp) return;
+    this._pvpAnimatePads(dt);
+    this._pvpUpdatePads(dt);
     for (const p of this.players) {
       if (p._invulnT > 0) p._invulnT -= dt;            // spawn protection ticking down
+      // frag attribution decays: a hit from a minute ago shouldn't claim a later self-kill
+      if (p.lastAttacker && !p.dead) { p.lastAttackerT = (p.lastAttackerT || 0) + dt; if (p.lastAttackerT > 5) p.lastAttacker = null; }
       if (p.dead && !p._pvpDeadHandled) {
         p._pvpDeadHandled = true; p._respawnT = 3.0;
         if (p._avatar) p._avatar.visible = false;
@@ -1421,6 +1547,10 @@ export class Game {
     this._coopOver = false; this._coopLeft = false;
     net.on('start', (d) => this._beginPvpGuest(d));
     net.on('pvpsnap', (snap) => { applyPvpSnap(this, snap); });
+    // the host picks each respawn corner (farthest from rivals) — adopt it so our
+    // dead→alive self-snap lands where the host put our body
+    net.on('respawn', (d) => { if (this._mySpawn) { this._mySpawn.set(d.x, d.y, d.z); this._mySpawn.yaw = d.yaw || 0; } });
+    net.on('full', () => this._coopFullNotice());
     net.onState((s) => { if (s === 'closed') this._onPeerLeft(); });
   }
 
@@ -1435,6 +1565,7 @@ export class Game {
     this.player.downable = false; this.player._pid = d.myId; this.player._team = d.team;
     if (d.spawn) { this._mySpawn = new THREE.Vector3(d.spawn.x, d.spawn.y, d.spawn.z); this._mySpawn.yaw = d.spawn.yaw || Math.PI;
       this.player.pos.copy(this._mySpawn); this.player.yaw = this._mySpawn.yaw; this.player._syncCamera(this.settings, 0); }
+    this._pvpBuildPads();                      // host mirrors taken/respawn via pkt/pkr
     this._pvpAvatars = new Map();              // every OTHER player, drawn from snapshots
     this._pvpMe = null; this._pvpBoard = null; this._wasPvpDead = false;
     this._ensurePvpHud();
@@ -1468,8 +1599,11 @@ export class Game {
     const startBtn = el.querySelector('[data-act="start"]');
     const roster = el.querySelector('[data-roster]');
     const refresh = () => { roster.innerHTML = 'You (host)' + this._lobbyPeers.map((_, i) => `<br>Player ${i + 2} — joined`).join(''); if (startBtn) startBtn.disabled = this._lobbyPeers.length < 1; };
+    this._lobbyClosed = false;
     net.onPeer((id) => {
+      if (this._lobbyClosed) { if (!this._pvpGuests || !this._pvpGuests.has(id)) net.send('full', 1, id); return; }  // match underway
       if (this._lobbyPeers.length < cap - 1 && !this._lobbyPeers.includes(id)) { this._lobbyPeers.push(id); this.audio.sfx('ui'); refresh(); }
+      else if (!this._lobbyPeers.includes(id)) { net.send('full', 1, id); return; }   // roster full — turn them away
       // a 1v1 needs no "Start" — launch as soon as the single rival connects
       if (duel && this._lobbyPeers.length >= 1) { this._coopSetStatus(el, 'Rival connected! Launching…', true); this._coopLaunchTimer = setTimeout(launch, 700); }
     });
@@ -1815,7 +1949,8 @@ export class Game {
     this.fx.push({ mesh: line, life: 0.06, maxLife: 0.06, kind: 'tracer' });
   }
   _spawnImpact(p, kind) {
-    const m = new THREE.Mesh(new THREE.SphereGeometry(0.1, 6, 6), new THREE.MeshBasicMaterial({ color: kind === 'spark' ? 0xffd070 : 0x9cff9c }));
+    const m = new THREE.Mesh(FX_SPHERE, new THREE.MeshBasicMaterial({ color: kind === 'spark' ? 0xffd070 : 0x9cff9c, transparent: true }));
+    m.scale.setScalar(0.1);
     m.position.copy(p); this.scene.add(m);
     this.fx.push({ mesh: m, life: 0.18, maxLife: 0.18, kind: 'impact' });
   }
@@ -1830,7 +1965,8 @@ export class Game {
     this.fx.push({ mesh: ring, life: duration, maxLife: duration, kind: 'telegraph' });
   }
   _spawnExplosion(p, r) {
-    const m = new THREE.Mesh(new THREE.SphereGeometry(0.4, 12, 10), new THREE.MeshBasicMaterial({ color: 0xffa040, transparent: true, opacity: 0.85 }));
+    const m = new THREE.Mesh(FX_SPHERE, new THREE.MeshBasicMaterial({ color: 0xffa040, transparent: true, opacity: 0.85 }));
+    m.scale.setScalar(0.4);
     m.position.copy(p); this.scene.add(m);
     const light = new THREE.PointLight(0xffa040, 3, r * 3); light.position.copy(p); this.scene.add(light);
     this.fx.push({ mesh: m, life: 0.35, maxLife: 0.35, kind: 'boom', r, light });
@@ -1970,13 +2106,30 @@ export class Game {
     else this.renderer.render(this.scene, this.camera);
   }
 
+  // Untaken pickups for the motion tracker (small gold squares on the dial).
+  _trackerExtras() {
+    if (!this.level || !this.level.pickups) return null;
+    const out = this._trackerScratch || (this._trackerScratch = { pickups: [] });
+    out.pickups.length = 0;
+    for (const p of this.level.pickups) if (!p.taken) out.pickups.push({ x: p.pos.x, z: p.pos.z });
+    return out;
+  }
+
   // Soft aim-assist for touch on foot. The reticle stays centred and the player
   // drags to look; here we find the nearest enemy inside a screen-centre cone and
   // pull the view GENTLY toward it — stronger while firing, fading to nothing at
   // the cone's edge — so shots land without pixel-perfect thumbs. It's a nudge,
   // never a lock: the player's own drag always overrides it. Works in world
   // angles (not mouseDX) so its feel is independent of the sensitivity slider.
-  _touchAssist(dt) {
+  _aimAssistOn() {
+    const mode = (this.settings.data.gameplay && this.settings.data.gameplay.aimAssist) || 'auto';
+    if (mode === 'off') return 0;
+    const padActive = this.input.lastSource === 'pad';
+    if (mode === 'auto') return (this.isTouch || padActive) ? 1 : 0;   // thumbs get help, mouse doesn't
+    return (this.isTouch || padActive) ? (mode === 'high' ? 1.45 : 0.7) : 0;
+  }
+
+  _touchAssist(dt, strength = 1) {
     const p = this.player;
     if (!p || p.dead || !p.weapon) return;
     this.camera.updateMatrixWorld();
@@ -1999,7 +2152,7 @@ export class Game {
     while (dyaw > Math.PI) dyaw -= Math.PI * 2; while (dyaw < -Math.PI) dyaw += Math.PI * 2;
     const firing = this.input.isDown('fire');
     const fade = 1 - bestD / CONE;     // full strength near centre, zero at the edge
-    const k = Math.min(0.5, dt * (firing ? 8 : 3) * fade);
+    const k = Math.min(0.5, dt * (firing ? 8 : 3) * fade * strength);
     p.yaw += dyaw * k;
     p.pitch += (desiredPitch - p.pitch) * k;
     const lim = Math.PI / 2 - 0.02;
@@ -2018,6 +2171,7 @@ export class Game {
     }
     this.input.beginFrame();
     const ctx = this._ctx();
+    for (const pl of this.players) if (pl) pl._meleeSlots = 0;   // melee attack tokens (per frame)
 
     // ADS flag for FOV zoom + scope overlay (scoped weapons only, on foot only)
     this.settings._adsActive = this.input.isDown('ads') && this.player.weapon != null;
@@ -2035,8 +2189,9 @@ export class Game {
       this.player.pos.copy(this.vehicle.pos);
       this.player.yaw = this.vehicle.heading;
       if (gun && this._guestPlayer) this._guestPlayer.pos.copy(this.vehicle.pos);
-    } else if (this.isTouch) {
-      this._touchAssist(dt);                       // soft aim magnetism off the centred reticle
+    } else {
+      const assist = this._aimAssistOn();          // touch + controller magnetism (Settings ▸ Gameplay)
+      if (assist > 0) this._touchAssist(dt, assist);
     }
     // advance any co-op/dummy players sharing the world
     for (const rp of this.players) { if (rp !== this.player) this._updateRemotePlayer(rp, dt, ctx); }
@@ -2057,7 +2212,13 @@ export class Game {
     hs.scoped = scoped;
     hs.scopeZoom = scoped ? this.player.weapon.def.adsZoom : 0;
     hs.driving = this.player.driving;
-    if (hs.dmgSfx) this.audio.sfx(hs.dmgSfx);
+    if (hs.dmgSfx) {
+      this.audio.sfx(hs.dmgSfx);
+      if (this.settings.data.gameplay && this.settings.data.gameplay.haptics) {
+        this.input.rumble(hs.dmgSfx === 'shieldbreak' ? 0.9 : 0.5, 130);
+        if (this.isTouch && navigator.vibrate) { try { navigator.vibrate(40); } catch (e) {} }
+      }
+    }
 
     // enemies
     for (const e of this.enemies) { e.update(dt, ctx); if (e.dead && !e._killHandled) { e._killHandled = true; this._onEnemyKilled(e); } }
@@ -2084,7 +2245,8 @@ export class Game {
     // signature ring drift
     if (this.aureole) this.aureole.rotation.z += dt * 0.01;
 
-    // HUD
+    // HUD (tracker blips: untaken pickups, drawn shape-coded on the dial)
+    hs.tracker = this._trackerExtras();
     this.hud.update(dt, hs, this.enemies, this.player);
     // solo driver-gunner sees the free turret reticle; the co-op host only drives (the guest aims), so hide it
     this.hud.setTurret(this.vehicle && this.coopRole !== 'host' ? { x: this.vehicle.aim.x, y: this.vehicle.aim.y, locked: !!this.vehicle.lockedTarget } : null);
@@ -2113,7 +2275,7 @@ export class Game {
       f.life -= dt;
       const t = Math.max(0, f.life / f.maxLife);
       if (f.kind === 'tracer' || f.kind === 'impact' || f.kind === 'muzzle') { if (f.mesh.material) f.mesh.material.opacity = t; }
-      if (f.kind === 'boom') { const s = 1 + (1 - t) * f.r; f.mesh.scale.setScalar(s); f.mesh.material.opacity = t * 0.85; if (f.light) f.light.intensity = 3 * t; }
+      if (f.kind === 'boom') { const s = 0.4 * (1 + (1 - t) * f.r); f.mesh.scale.setScalar(s); f.mesh.material.opacity = t * 0.85; if (f.light) f.light.intensity = 3 * t; }
       if (f.kind === 'telegraph') { if (f.mesh.material) f.mesh.material.opacity = 0.2 + 0.6 * (1 - t); } // brighten toward the hit
       if (f.kind === 'goo') {
         f.vel.y -= 18 * dt;
@@ -2124,8 +2286,8 @@ export class Game {
       if (f.life <= 0) {
         if (f.parent) f.parent.remove(f.mesh); else this.scene.remove(f.mesh);
         if (f.light) this.scene.remove(f.light);
-        // free the GPU resources — every fx kind makes its own geometry+material
-        if (f.mesh.geometry) f.mesh.geometry.dispose();
+        // free the GPU resources (shared/cached geometries are owned by their cache)
+        if (f.mesh.geometry && !f.mesh.geometry.userData.shared) f.mesh.geometry.dispose();
         if (f.mesh.material) f.mesh.material.dispose();
         this.fx.splice(i, 1);
       }
@@ -2151,8 +2313,8 @@ export class Game {
     if (this._reducedMotion) return;
     const c = color || 0x9cff9c;
     for (let i = 0; i < 7; i++) {
-      const m = new THREE.Mesh(new THREE.SphereGeometry(0.08 + Math.random() * 0.1, 6, 5),
-        new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: 0.9 }));
+      const m = new THREE.Mesh(FX_SPHERE, new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: 0.9 }));
+      m.scale.setScalar(0.08 + Math.random() * 0.1);
       m.position.set(pos.x, pos.y + 1.0, pos.z);
       this.scene.add(m);
       const a = Math.random() * Math.PI * 2, sp = 2 + Math.random() * 4.5;

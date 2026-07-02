@@ -11,3 +11,7 @@ Thumbs.db
 .idea/
 
 # Keep package-lock.json tracked for reproducible installs
+
+# Test artifacts
+test-results/
+playwright-report/

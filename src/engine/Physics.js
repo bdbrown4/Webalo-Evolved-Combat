@@ -5,6 +5,9 @@
 
 import * as THREE from 'three';
 
+const AXES = ['x', 'y', 'z'];              // static — a fresh array per ray was GC noise
+const _losDir = new THREE.Vector3();       // hasLineOfSight scratch (hot: every enemy, every frame)
+
 export class Physics {
   constructor() {
     this.colliders = []; // { min: Vector3, max: Vector3, tag }
@@ -26,40 +29,52 @@ export class Physics {
   }
 
   // pos is the FEET position. Returns { grounded } and mutates pos + vel.
+  // Fast movers (boosted vehicle ~28 u/s, boss charge) are substepped so a frame
+  // hitch can't teleport them clean through a thin collider (doors are 0.4 thick).
   moveAndCollide(pos, vel, dt, radius, height) {
     const out = { grounded: false };
-    // ---- X axis ----
-    pos.x += vel.x * dt;
-    this._resolveAxis(pos, vel, radius, height, 'x');
-    // ---- Z axis ----
-    pos.z += vel.z * dt;
-    this._resolveAxis(pos, vel, radius, height, 'z');
-    // ---- Y axis ----
-    pos.y += vel.y * dt;
-    out.grounded = this._resolveAxis(pos, vel, radius, height, 'y');
+    const maxSpeed = Math.max(Math.abs(vel.x), Math.abs(vel.y), Math.abs(vel.z));
+    const steps = Math.min(4, Math.max(1, Math.ceil((maxSpeed * dt) / 0.3)));
+    const sdt = dt / steps;
+    for (let i = 0; i < steps; i++) {
+      // ---- X axis ----
+      pos.x += vel.x * sdt;
+      this._resolveAxis(pos, vel, radius, height, 'x');
+      // ---- Z axis ----
+      pos.z += vel.z * sdt;
+      this._resolveAxis(pos, vel, radius, height, 'z');
+      // ---- Y axis ----
+      pos.y += vel.y * sdt;
+      if (this._resolveAxis(pos, vel, radius, height, 'y')) out.grounded = true;
+    }
     // world floor (default y=0) as a safety net; lowered to a void on the track
     if (pos.y < this.floorY) { pos.y = this.floorY; if (vel.y < 0) vel.y = 0; out.grounded = true; }
     return out;
   }
 
-  _playerAABB(pos, radius, height) {
-    return {
-      min: new THREE.Vector3(pos.x - radius, pos.y, pos.z - radius),
-      max: new THREE.Vector3(pos.x + radius, pos.y + height, pos.z + radius),
-    };
+  // Is an entity-sized box at (x, y, z) clear of all world colliders? Used by
+  // teleporting enemies to avoid blinking into geometry.
+  boxFree(x, y, z, radius, height) {
+    for (const c of this.colliders) {
+      if (x - radius < c.max.x && x + radius > c.min.x &&
+          y < c.max.y && y + height > c.min.y &&
+          z - radius < c.max.z && z + radius > c.min.z) return false;
+    }
+    return true;
   }
 
-  _overlap(a, b) {
-    return a.min.x < b.max.x && a.max.x > b.min.x &&
-           a.min.y < b.max.y && a.max.y > b.min.y &&
-           a.min.z < b.max.z && a.max.z > b.min.z;
-  }
-
+  // Allocation-free: this runs 3× per substep for every player, enemy, and the
+  // vehicle, every frame — the overlap test compares plain numbers against the
+  // capsule-AABB implied by (pos, radius, height), never building a box object.
   _resolveAxis(pos, vel, radius, height, axis) {
     let grounded = false;
-    const box = this._playerAABB(pos, radius, height);
     for (const c of this.colliders) {
-      if (!this._overlap(box, c)) continue;
+      if (pos.x - radius >= c.max.x || pos.x + radius <= c.min.x ||
+          pos.y >= c.max.y || pos.y + height <= c.min.y ||
+          pos.z - radius >= c.max.z || pos.z + radius <= c.min.z) continue;
+      // step-up: a low ledge (≤0.45u above the feet) is climbed, not a wall —
+      // this is what makes ramps/kerbs/multi-height floors possible at all
+      if (axis !== 'y' && c.max.y - pos.y <= 0.45 && c.max.y - pos.y > 0) { pos.y = c.max.y + 0.001; continue; }
       if (axis === 'x') {
         if (vel.x > 0) pos.x = c.min.x - radius - 0.001;
         else if (vel.x < 0) pos.x = c.max.x + radius + 0.001;
@@ -73,8 +88,6 @@ export class Physics {
         else { pos.y = c.min.y - height - 0.001; }
         vel.y = 0;
       }
-      box.min.copy(this._playerAABB(pos, radius, height).min);
-      box.max.copy(this._playerAABB(pos, radius, height).max);
     }
     return grounded;
   }
@@ -102,7 +115,7 @@ export class Physics {
 
   _rayBoxHit(o, d, box) {
     let tmin = 0, tmax = Infinity, axis = null;
-    for (const ax of ['x', 'y', 'z']) {
+    for (const ax of AXES) {
       const inv = 1 / (d[ax] || 1e-9);
       let t1 = (box.min[ax] - o[ax]) * inv;
       let t2 = (box.max[ax] - o[ax]) * inv;
@@ -119,7 +132,7 @@ export class Physics {
 
   _rayBox(o, d, box) {
     let tmin = 0, tmax = Infinity;
-    for (const ax of ['x', 'y', 'z']) {
+    for (const ax of AXES) {
       const inv = 1 / (d[ax] || 1e-9);
       let t1 = (box.min[ax] - o[ax]) * inv;
       let t2 = (box.max[ax] - o[ax]) * inv;
@@ -133,10 +146,10 @@ export class Physics {
 
   // Is there clear line of sight between two points (ignores entities)?
   hasLineOfSight(from, to) {
-    const dir = new THREE.Vector3().subVectors(to, from);
+    const dir = _losDir.subVectors(to, from);
     const dist = dir.length();
     if (dist < 0.001) return true;
-    dir.normalize();
+    dir.multiplyScalar(1 / dist);
     return this.raycastWorld(from, dir, dist) >= dist - 0.2;
   }
 }

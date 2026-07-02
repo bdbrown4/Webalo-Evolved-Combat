@@ -6,6 +6,8 @@
 import * as THREE from 'three';
 import { Weapon, WEAPONS } from './Weapon.js';
 
+const _aimScratch = new THREE.Vector3();   // hot-loop target point (hitscan / aim cone)
+
 const SHIELD_MAX = 70;
 const HEALTH_MAX = 45;
 const SHIELD_REGEN_DELAY = 3.0;
@@ -117,10 +119,11 @@ export class Player {
     this.nadeEvent = 'cancelled';
   }
 
-  headPoint() { return new THREE.Vector3(this.pos.x, this.pos.y + this.curHeight * 0.92, this.pos.z); }
+  headPoint(out) { return (out || new THREE.Vector3()).set(this.pos.x, this.pos.y + this.curHeight * 0.92, this.pos.z); }
   // chest point — where shots and splash register when a Player is a combat target
-  // (PvP). Mirrors Enemy.aimPoint so the same hit/aim code works for either.
-  aimPoint() { return new THREE.Vector3(this.pos.x, this.pos.y + this.curHeight * 0.6, this.pos.z); }
+  // (PvP). Mirrors Enemy.aimPoint (incl. the optional scratch vector) so the same
+  // hit/aim code works for either.
+  aimPoint(out) { return (out || new THREE.Vector3()).set(this.pos.x, this.pos.y + this.curHeight * 0.6, this.pos.z); }
 
   lookDir() {
     return new THREE.Vector3(
@@ -140,6 +143,9 @@ export class Player {
     amount *= this.dmgTakenMult; // difficulty scaling
     this.regenT = 0;
     this.lastHitFlash = 0.3;
+    // where the hit came from — drives the HUD's directional damage arc
+    const src = opts && (opts.isVector3 ? opts : opts.source);
+    if (src && src.isVector3) { this._hitFromX = src.x; this._hitFromZ = src.z; this._hitFromT = 0.7; }
     const wasShielded = this.shield > 0;
     if (this.shield > 0) {
       this.shield -= amount;
@@ -187,6 +193,7 @@ export class Player {
       if (!this._gunner) this._combat(dt, input, ctx);
       if (this.meleeCd > 0) this.meleeCd -= dt;
       if (this.lastHitFlash > 0) this.lastHitFlash -= dt;
+    if (this._hitFromT > 0) this._hitFromT -= dt;
       if (this.justFired > 0) this.justFired -= dt;
       return;
     }
@@ -195,6 +202,7 @@ export class Player {
       this._regen(dt, ctx);
       if (this.weapon) this.weapon.update(dt);
       if (this.lastHitFlash > 0) this.lastHitFlash -= dt;
+    if (this._hitFromT > 0) this._hitFromT -= dt;
       return;
     }
     this._look(input, settings);
@@ -204,6 +212,7 @@ export class Player {
     this._combat(dt, input, ctx);
     if (this.meleeCd > 0) this.meleeCd -= dt;
     if (this.lastHitFlash > 0) this.lastHitFlash -= dt;
+    if (this._hitFromT > 0) this._hitFromT -= dt;
     if (this.justFired > 0) this.justFired -= dt;
     this._syncCamera(settings, dt);
   }
@@ -350,7 +359,7 @@ export class Player {
     let best = null, bestDot = minDot;
     for (const e of (ctx.combatTargets ? ctx.combatTargets(this) : ctx.enemies)) {
       if (e.dead) continue;
-      const to = this._tmp.subVectors(e.aimPoint(), origin);
+      const to = this._tmp.subVectors(e.aimPoint(_aimScratch), origin);
       const dist = to.length();
       if (dist < 0.001 || dist > 90) continue;
       const dot = to.multiplyScalar(1 / dist).dot(dir);
@@ -376,10 +385,11 @@ export class Player {
     let target = null, headshot = false;
     for (const e of (ctx.combatTargets ? ctx.combatTargets(this) : ctx.enemies)) {
       if (e.dead) continue;
-      const hit = this._raySphere(origin, dir, e.aimPoint(), e.type === 'boss' ? 3.2 : 0.7);
+      const ap = e.aimPoint(_aimScratch);
+      const hit = this._raySphere(origin, dir, ap, e.type === 'boss' ? 3.2 : 0.7);
       if (hit !== null && hit < bestT) {
         bestT = hit; target = e;
-        const headY = e.aimPoint().y + (e.type === 'boss' ? 1.5 : 0.4);
+        const headY = ap.y + (e.type === 'boss' ? 1.5 : 0.4);
         const hitY = origin.y + dir.y * hit;
         headshot = hitY > headY - 0.15;
       }
@@ -516,6 +526,12 @@ export class Player {
       cook: this.cooking ? (this.cooking.sticky ? 1 : Math.max(0, this.cooking.fuse / this.cooking.max)) : null,
       dmgSfx: this._consumeDmgSfx(), hitFlash: this.lastHitFlash > 0,
       lowShield: this.shield <= 0 && this.health < this.healthMax * 0.5,
+      // screen-relative bearing of the latest hit (0 = ahead, +right), or null.
+      // Same projection the motion tracker uses.
+      hitDir: this._hitFromT > 0
+        ? Math.atan2(-(this._hitFromX - this.pos.x) * Math.cos(this.yaw) + (this._hitFromZ - this.pos.z) * Math.sin(this.yaw),
+                     (this._hitFromX - this.pos.x) * Math.sin(this.yaw) + (this._hitFromZ - this.pos.z) * Math.cos(this.yaw))
+        : null,
     };
   }
   _consumeDmgSfx() { const s = this._dmgSfx; this._dmgSfx = null; return s; }

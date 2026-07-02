@@ -4,6 +4,10 @@
 
 import * as THREE from 'three';
 
+const _enemyTemplates = new Map();   // enemy type -> template Group (clone per spawn)
+const _projCache = new Map();        // projectile type -> { geo, mat, cloneMat }
+let _muzzleGeo = null;               // shared muzzle-flash sphere
+
 const mat = (color, opts = {}) => new THREE.MeshStandardMaterial({
   color, roughness: opts.rough ?? 0.8, metalness: opts.metal ?? 0.05,
   emissive: opts.emissive ?? 0x000000, emissiveIntensity: opts.emissiveIntensity ?? 1,
@@ -98,7 +102,27 @@ export const AssetFactory = {
   },
 
   // ---------- Wobble Coalition aliens ----------
+  // Enemies spawn constantly (Survival waves), so each type is built ONCE as a
+  // template and spawns are clones: geometries + most materials are shared (no
+  // per-spawn buffer uploads / shader compiles). Only the handful of materials
+  // that animate per-instance (hit flash, fuse pulse, plate glint, shield
+  // bubble) are cloned. Special part references can't ride userData through
+  // clone(), so parts are tagged by NAME and rebound here.
   enemy(type) {
+    let tpl = _enemyTemplates.get(type);
+    if (!tpl) { tpl = this._buildEnemy(type); _enemyTemplates.set(type, tpl); }
+    const g = tpl.clone();
+    g.userData = { standHeight: tpl.userData.standHeight };
+    for (const key of ['body', 'antennaBulb', 'hoverRing', 'popCore', 'plate', 'shieldBubble']) {
+      const node = g.getObjectByName('ud_' + key);
+      if (!node) continue;
+      g.userData[key] = node;
+      if (node.material && key !== 'antennaBulb' && key !== 'hoverRing') node.material = node.material.clone();
+    }
+    return g;
+  },
+
+  _buildEnemy(type) {
     const g = new THREE.Group();
     const cfg = {
       blork:   { color: 0xff8a3d, size: 0.45, eye: 0.12, antenna: true,  feet: true },
@@ -120,8 +144,8 @@ export const AssetFactory = {
     const body = new THREE.Mesh(bodyGeo, mat(cfg.color, { rough: 0.5, flat: false }));
     body.scale.y = cfg.tall ? 1 : (cfg.bulky ? 0.85 : 1.05);
     body.position.y = cfg.hover ? s * 1.6 : s * (cfg.tall ? 1.4 : 1.0);
+    body.name = 'ud_body';
     g.add(body);
-    g.userData.body = body;
 
     // googly eyes
     const eL = googlyEye(cfg.eye), eR = googlyEye(cfg.eye);
@@ -134,8 +158,8 @@ export const AssetFactory = {
       stalk.position.set(0, body.position.y + s * 0.9, 0);
       const bulb = new THREE.Mesh(new THREE.SphereGeometry(s * 0.12, 8, 8), mat(cfg.color, { emissive: cfg.color, emissiveIntensity: 0.7 }));
       bulb.position.set(0, body.position.y + s * 1.25, 0);
+      bulb.name = 'ud_antennaBulb';
       g.add(stalk, bulb);
-      g.userData.antennaBulb = bulb;
     }
     if (cfg.feet) {
       for (const sx of [-1, 1]) {
@@ -148,8 +172,8 @@ export const AssetFactory = {
     if (cfg.hover) {
       const ring = new THREE.Mesh(new THREE.TorusGeometry(s * 0.9, s * 0.12, 8, 18), mat(0x444, { metal: 0.5 }));
       ring.rotation.x = Math.PI / 2; ring.position.y = s * 1.1;
+      ring.name = 'ud_hoverRing';
       g.add(ring);
-      g.userData.hoverRing = ring;
     }
     if (cfg.bulky) {
       for (const sx of [-1, 1]) {
@@ -190,7 +214,7 @@ export const AssetFactory = {
     if (cfg.core) {            // popper: a volatile glowing core that flashes on its fuse
       const core = new THREE.Mesh(new THREE.SphereGeometry(s * 0.55, 12, 10),
         mat(0xffd24a, { emissive: 0xffaa33, emissiveIntensity: 0.8, transparent: true, opacity: 0.85 }));
-      core.position.y = body.position.y; g.add(core); g.userData.popCore = core;
+      core.name = 'ud_popCore'; core.position.y = body.position.y; g.add(core);
     }
     if (cfg.cross) {           // medic: a glowing health cross
       const cm = mat(0xffffff, { emissive: 0xbfffd0, emissiveIntensity: 1.0 });
@@ -201,7 +225,7 @@ export const AssetFactory = {
     }
     if (cfg.plate) {           // bulwark: a frontal shield plate (local +z = the unit's facing)
       const plate = new THREE.Mesh(new THREE.BoxGeometry(s * 1.9, s * 1.7, s * 0.18), mat(0x6f7b87, { metal: 0.5, rough: 0.4 }));
-      plate.position.set(0, body.position.y, s * 1.05); g.add(plate); g.userData.plate = plate;
+      plate.name = 'ud_plate'; plate.position.set(0, body.position.y, s * 1.05); g.add(plate);
       const rim = new THREE.Mesh(new THREE.TorusGeometry(s * 0.82, s * 0.08, 6, 16), mat(cfg.color, { emissive: cfg.color, emissiveIntensity: 0.4 }));
       rim.position.set(0, body.position.y, s * 1.16); g.add(rim);
     }
@@ -216,7 +240,7 @@ export const AssetFactory = {
       const bc = type === 'sprocket' ? cfg.color : 0x35c98f;
       const bub = new THREE.Mesh(new THREE.SphereGeometry(s * 1.35, 16, 12), mat(bc, { transparent: true, opacity: 0.18, emissive: bc, emissiveIntensity: 0.4 }));
       bub.position.y = body.position.y;
-      g.add(bub); g.userData.shieldBubble = bub;
+      bub.name = 'ud_shieldBubble'; g.add(bub);
     }
 
     g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = false; } });
@@ -445,15 +469,25 @@ export const AssetFactory = {
   },
 
   muzzleFlash(color = 0xfff0a0) {
-    const m = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 6), mat(color, { emissive: color, emissiveIntensity: 2, transparent: true, opacity: 0.9 }));
-    return m;
+    // shared geometry (this spawns once per SHOT); the material stays per-instance
+    // because the FX fade animates its opacity
+    if (!_muzzleGeo) { _muzzleGeo = new THREE.SphereGeometry(0.12, 8, 6); _muzzleGeo.userData.shared = true; }
+    return new THREE.Mesh(_muzzleGeo, mat(color, { emissive: color, emissiveIntensity: 2, transparent: true, opacity: 0.9 }));
   },
 
+  // Projectiles spawn every shot — geometry and material are cached per type.
+  // Grenades get a cloned material (goobers pulse emissiveIntensity on stick).
   projectileMesh(type) {
-    if (type === 'goo') return new THREE.Mesh(new THREE.SphereGeometry(0.14, 8, 8), mat(0x6cd06c, { emissive: 0x39ff39, emissiveIntensity: 1.2 }));
-    if (type === 'shard') return new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.34, 6), mat(0xff7fd0, { emissive: 0xff3fb0, emissiveIntensity: 1.2 }));
-    if (type === 'grenade') return new THREE.Mesh(new THREE.SphereGeometry(0.16, 10, 10), mat(0x335533, { emissive: 0x66aa66, emissiveIntensity: 0.4 }));
-    if (type === 'bossbolt') return new THREE.Mesh(new THREE.SphereGeometry(0.3, 10, 10), mat(0xff5a8a, { emissive: 0xff2a6a, emissiveIntensity: 1.2 }));
-    return new THREE.Mesh(new THREE.SphereGeometry(0.1, 6, 6), mat(0xffffff));
+    let c = _projCache.get(type);
+    if (!c) {
+      c =
+        type === 'goo' ? { geo: new THREE.SphereGeometry(0.14, 8, 8), mat: mat(0x6cd06c, { emissive: 0x39ff39, emissiveIntensity: 1.2 }) } :
+        type === 'shard' ? { geo: new THREE.ConeGeometry(0.06, 0.34, 6), mat: mat(0xff7fd0, { emissive: 0xff3fb0, emissiveIntensity: 1.2 }) } :
+        type === 'grenade' ? { geo: new THREE.SphereGeometry(0.16, 10, 10), mat: mat(0x335533, { emissive: 0x66aa66, emissiveIntensity: 0.4 }), cloneMat: true } :
+        type === 'bossbolt' ? { geo: new THREE.SphereGeometry(0.3, 10, 10), mat: mat(0xff5a8a, { emissive: 0xff2a6a, emissiveIntensity: 1.2 }) } :
+        { geo: new THREE.SphereGeometry(0.1, 6, 6), mat: mat(0xffffff) };
+      _projCache.set(type, c);
+    }
+    return new THREE.Mesh(c.geo, c.cloneMat ? c.mat.clone() : c.mat);
   },
 };

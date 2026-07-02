@@ -12,6 +12,16 @@ import { hostTrystero, joinTrystero, makeRoomCode } from '../net/Net.js';
 // fires (Player._fire), so it shields against spawn-camping without enabling it.
 const PVP_SPAWN_INVULN = 2.5;
 
+// Call signs travel over the wire and end up in scoreboard/kill-feed markup, so
+// they're whitelist-sanitized at ingestion: word chars, spaces, - and ', 14 max.
+export function sanitizeName(raw, fallback) {
+  const clean = String(raw || '').replace(/[^\w \-']/g, '').trim().slice(0, 14);
+  return clean || fallback;
+}
+function myName(fallback) {
+  try { return sanitizeName(localStorage.getItem('webalo.playerName'), fallback); } catch (e) { return fallback; }
+}
+
 export const PvpSessionMixin = {
   // ---------- PvP: Deathmatch — FFA & 2v2 teams (host-authoritative, multi-peer) ----------
   // Who a shooter may damage: enemies in PvE; opposing players in PvP (never self;
@@ -147,24 +157,64 @@ export const PvpSessionMixin = {
     const sp = this._pvpSpawns(peers.length + 1);
     this._pvpSpawnPts = this._pvpSpawns(4);     // full corner set, for respawn placement
     this._pvpGuests = new Map();
+    this._pvpNextPid = peers.length + 1;        // mid-match joiners take pids after the roster
     // host = player id 0
-    this._pvpArm(this.player, sp[0], 0, teams ? 0 : 0, 'You');
+    this._pvpArm(this.player, sp[0], 0, 0, myName('You'));
     this.player._syncCamera(this.settings, 0);
-    // one body per connected peer
+    this._pvpBuildPads();
+    // one body per connected peer, named by its hello (fallback P2/P3…)
     peers.forEach((peerId, i) => {
       const pid = i + 1, team = teams ? pid % 2 : pid;
+      const name = sanitizeName(this._peerNames && this._peerNames.get(peerId), 'P' + (pid + 1));
       const g = this.addRemotePlayer(sp[pid], { color: pvpColor(teams, pid, team), id: 'p' + pid, weapons: ['rifle', 'pistol'] });
       g._netInput = new NetInputProxy();
-      this._pvpArm(g, sp[pid], pid, team, teams ? `${team === 0 ? 'Blue' : 'Red'} ${Math.ceil(pid / 2)}` : 'P' + (pid + 1));
+      this._pvpArm(g, sp[pid], pid, team, name);
       g._peerId = peerId;                    // so host→guest unicasts (respawn) can find them
       this._pvpGuests.set(peerId, g);
-      this.net.send('start', { seed: this._levelSeed, mode: this._pvp.mode, fragLimit: this._pvp.fragLimit,
-        myId: pid, team, players: peers.length + 1,
-        spawn: { x: sp[pid].x, y: sp[pid].y, z: sp[pid].z, yaw: sp[pid].yaw } }, peerId);
+      this.net.send('start', this._pvpStartPayload(pid, team, sp[pid]), peerId);
     });
-    this._pvpBuildPads();
     this._ensurePvpHud();
     this.hud.banner(teams ? 'TEAM DEATHMATCH' : this._pvp.mode === 'duel' ? 'DUEL' : 'FREE-FOR-ALL', `First to ${this._pvp.fragLimit} frags${teams ? ' (team total)' : ''}.`, 2.6);
+  },
+
+  // The 'start' packet for one guest — also used for join-in-progress, so it
+  // carries the LIVE pad state (a fresh build sends all pads up).
+  _pvpStartPayload(pid, team, spawn) {
+    return {
+      seed: this._levelSeed, mode: this._pvp.mode, fragLimit: this._pvp.fragLimit,
+      myId: pid, team, players: this.players.length,
+      spawn: { x: spawn.x, y: spawn.y, z: spawn.z, yaw: spawn.yaw || 0 },
+      pads: (this._pvpPads || []).map((pad) => ({ id: pad.id, taken: !!pad.taken })),
+    };
+  },
+
+  // A peer arrived while the match is LIVE — seat them (join-in-progress) unless
+  // the format is a duel or the arena is full. During the results screen they
+  // just join the roster and deploy with the rematch.
+  _pvpMidJoin(peerId) {
+    const duel = this._pvp && this._pvp.mode === 'duel';
+    if (!this._pvp || duel || this.players.length >= 4) { this.net.send('full', 1, peerId); return; }
+    if (this._pvpPeers && !this._pvpPeers.includes(peerId)) this._pvpPeers.push(peerId);   // rematch roster
+    if (this._pvp.over) return;                                  // seated at the next rematch
+    const teams = this._pvp.teams;
+    const pid = this._pvpNextPid = (this._pvpNextPid || this.players.length) + 1;
+    // teams: balance onto the smaller side; FFA: team = pid (everyone hostile)
+    let team = pid;
+    if (teams) {
+      let blue = 0, red = 0;
+      for (const p of this.players) if (p) ((p._team % 2) === 0 ? blue++ : red++);
+      team = blue <= red ? 0 : 1;
+    }
+    const name = sanitizeName(this._peerNames && this._peerNames.get(peerId), 'P' + (this.players.length + 1));
+    const spawn = this._pvpPickSpawn({ _team: team });           // farthest corner from the action
+    const g = this.addRemotePlayer(spawn, { color: pvpColor(teams, pid, team), id: 'p' + pid, weapons: ['rifle', 'pistol'] });
+    g._netInput = new NetInputProxy();
+    this._pvpArm(g, spawn, pid, team, name);
+    g._peerId = peerId;
+    this._pvpGuests.set(peerId, g);
+    this.net.send('start', this._pvpStartPayload(pid, team, spawn), peerId);
+    this.hud.killFeed(`${name} joined`, 0x7cfc9a);
+    this._netPush('kill', `${name} joined`, 0x7cfc9a);
   },
 
   // Configure a player as a PvP combatant: a fixed spawn, id/team/name, fresh score,
@@ -275,6 +325,7 @@ export const PvpSessionMixin = {
     if (d.spawn) { this._mySpawn = new THREE.Vector3(d.spawn.x, d.spawn.y, d.spawn.z); this._mySpawn.yaw = d.spawn.yaw || Math.PI;
       this.player.pos.copy(this._mySpawn); this.player.yaw = this._mySpawn.yaw; this.player._syncCamera(this.settings, 0); }
     this._pvpBuildPads();                      // host mirrors taken/respawn via pkt/pkr
+    if (d.pads) for (const ps of d.pads) { const pad = this._pvpPads.find((x) => x.id === ps.id); if (pad) { pad.taken = ps.taken; pad.mesh.visible = !ps.taken; } }
     this._pvpAvatars = new Map();              // every OTHER player, drawn from snapshots
     this._pvpMe = null; this._pvpBoard = null; this._wasPvpDead = false;
     this._ensurePvpHud();
@@ -290,6 +341,8 @@ export const PvpSessionMixin = {
     const mode = (opts && opts.mode) || 'ffa';
     this._pvpConfig = { fragLimit: (opts && opts.fragLimit) || 15, mode };
     this._lobbyPeers = [];
+    this._peerNames = new Map();
+    net.on('hello', (d, peerId) => { this._peerNames.set(peerId, sanitizeName(d && d.name, '')); if (this._lobbyRefresh) this._lobbyRefresh(); });
     const duel = mode === 'duel';
     const cap = duel ? 2 : 4;                          // duel = exactly two players
     const modeName = duel ? '1v1 Duel' : mode === 'teams' ? '2v2 Teams' : 'Free-for-All';
@@ -307,10 +360,16 @@ export const PvpSessionMixin = {
     copyBtn.addEventListener('click', () => { try { navigator.clipboard.writeText(code); copyBtn.textContent = '✓ Copied'; setTimeout(() => { copyBtn.textContent = '⧉ Copy Code'; }, 1200); } catch (e) {} });
     const startBtn = el.querySelector('[data-act="start"]');
     const roster = el.querySelector('[data-roster]');
-    const refresh = () => { roster.innerHTML = 'You (host)' + this._lobbyPeers.map((_, i) => `<br>Player ${i + 2} — joined`).join(''); if (startBtn) startBtn.disabled = this._lobbyPeers.length < 1; };
+    const refresh = () => {
+      if (!roster.isConnected) return;
+      const names = this._lobbyPeers.map((id, i) => this._peerNames.get(id) || `Player ${i + 2}`);
+      roster.innerHTML = `${myName('You')} (host)` + names.map((n) => `<br>${n} — joined`).join('');
+      if (startBtn) startBtn.disabled = this._lobbyPeers.length < 1;
+    };
+    this._lobbyRefresh = refresh;
     this._lobbyClosed = false;
     net.onPeer((id) => {
-      if (this._lobbyClosed) { if (!this._pvpGuests || !this._pvpGuests.has(id)) net.send('full', 1, id); return; }  // match underway
+      if (this._lobbyClosed) { if (!this._pvpGuests || !this._pvpGuests.has(id)) this._pvpMidJoin(id); return; }  // match underway → join in progress
       if (this._lobbyPeers.length < cap - 1 && !this._lobbyPeers.includes(id)) { this._lobbyPeers.push(id); this.audio.sfx('ui'); refresh(); }
       else if (!this._lobbyPeers.includes(id)) { net.send('full', 1, id); return; }   // roster full — turn them away
       // a 1v1 needs no "Start" — launch as soon as the single rival connects
@@ -332,7 +391,11 @@ export const PvpSessionMixin = {
     this.joinPvp(net);
     this._coopReassure = setTimeout(() => this._coopSetStatus(el, 'Still linking… hang tight (relays can be slow).'), 5000);
     this._coopFailTimer = setTimeout(() => { if (!this.level) this._coopFail(el, net, 'Couldn’t reach the host. Double-check the code and that they’re still hosting.'); }, 25000);
-    net.onState((s) => { if (s === 'connected') this._coopSetStatus(el, 'Connected! Waiting for the host to start…', true); });
+    net.onState((s) => {
+      if (s !== 'connected') return;
+      net.send('hello', { name: myName('') });     // introduce our call sign to the host
+      this._coopSetStatus(el, 'Connected! Waiting for the host to start…', true);
+    });
   },
 
   // ---------- PvP: scoreboard HUD ----------

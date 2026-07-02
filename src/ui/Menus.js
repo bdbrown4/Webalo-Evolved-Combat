@@ -149,6 +149,9 @@ export class Menus {
           <div class="game-tag">Up to four players over the same direct peer-to-peer link as co-op — no server.</div>
         </div>
         <div class="menu-list">
+          <div class="coop-join-row">
+            <input class="coop-code-input" data-field="pname" placeholder="Your call sign (shown to rivals)" maxlength="14" autocomplete="off" spellcheck="false" />
+          </div>
           <div class="setting-row" style="justify-content:center;gap:14px;border:0">
             <label>Mode</label>
             <button class="btn ghost" data-act="mode" style="display:inline-block;padding:7px 16px">${modeLabel(this._pvpMode)}</button>
@@ -167,6 +170,9 @@ export class Menus {
         </div>
         <div class="menu-footer">Host picks mode + frag limit and shares the code; rivals <b>Join</b>, then the host starts (1v1 launches as soon as your rival connects).</div>
       </div>`;
+    const pname = this.el.querySelector('[data-field="pname"]');
+    try { pname.value = localStorage.getItem('webalo.playerName') || ''; } catch (e) {}
+    pname.addEventListener('input', () => { try { localStorage.setItem('webalo.playerName', pname.value); } catch (e) {} });
     const modeBtn = this.el.querySelector('[data-act="mode"]');
     const modeHintEl = this.el.querySelector('[data-mode-hint]');
     modeBtn.addEventListener('click', () => { this._click(); this._pvpMode = MODES[(MODES.indexOf(this._pvpMode) + 1) % MODES.length]; modeBtn.textContent = modeLabel(this._pvpMode); modeHintEl.textContent = modeHint(this._pvpMode); });

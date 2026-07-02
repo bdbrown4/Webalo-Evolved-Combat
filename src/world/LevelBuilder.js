@@ -318,8 +318,7 @@ export class LevelBuilder {
 
   _forceOpenDoor(room) {
     if (!room.door) return;
-    const idx = this.physics.colliders.indexOf(room.door.collider);
-    if (idx >= 0) this.physics.colliders.splice(idx, 1);
+    this.physics.removeCollider(room.door.collider);   // keeps the broadphase grid honest
     room.door.mesh.visible = false;
   }
 
@@ -530,8 +529,7 @@ export class LevelBuilder {
 
   _openDoor(room, ctx) {
     if (!room.door) return;
-    const idx = this.physics.colliders.indexOf(room.door.collider);
-    if (idx >= 0) this.physics.colliders.splice(idx, 1);
+    this.physics.removeCollider(room.door.collider);   // keeps the broadphase grid honest
     // slide the door up out of the way — animated from update() with real dt (the
     // old rAF loop ran at a framerate-dependent speed, kept ticking while paused,
     // and survived dispose())

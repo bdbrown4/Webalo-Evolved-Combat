@@ -82,6 +82,7 @@ export class Enemy {
     }
     this.hp -= dmg;
     this.flashT = 0.06;
+    if (this.meta.kind === 'popper' && opts.crit && !this._detonated) this._detonateNow = true;
     // knockback: shots with punch (boomstick pellets/slug, explosions) shove the
     // body through the same velocity the death tumble uses. The boss holds its ground.
     if (opts.impulse && opts.source && this.type !== 'boss' && !this.hover) {
@@ -110,7 +111,9 @@ export class Enemy {
 
   update(dt, ctx) {
     this.wobble += dt * 6;
-    if (this.dead) return this._updateDeath(dt);
+    // a cracked core (crit) detonates before anything else — even before the death tumble
+    if (this._detonateNow && !this._detonated) { this._detonateNow = false; this._detonated = true; this.dead = false; this._detonate(ctx); }
+    if (this.dead) return this._updateDeath(dt, ctx);
 
     // co-op: lock onto the nearest LIVING player (solo = the one player). A downed
     // player is ignored; if everyone's down there's nothing to chase, so coast —
@@ -156,8 +159,20 @@ export class Enemy {
 
   _melee(dt, ctx, dist, flat) {
     this.state = 'chase';
-    const want = dist > this.meta.range * 0.8 ? this.speed : 0;
-    this.vel.x = flat.x * want; this.vel.z = flat.z * want;
+    // attack tokens: only a few swarmers press the attack at once — the rest
+    // ORBIT at reach, so a horde encircles you instead of forming a conga line.
+    // Tokens are granted per frame by the Game (ctx.meleeToken), first-come.
+    const engaged = dist > 9 || !ctx.meleeToken || ctx.meleeToken(this.target);
+    if (engaged) {
+      const want = dist > this.meta.range * 0.8 ? this.speed : 0;
+      this.vel.x = flat.x * want; this.vel.z = flat.z * want;
+    } else {
+      // circle: hold ~6u out and strafe around the target (direction varies per id)
+      const dirSign = (this.id % 2) ? 1 : -1;
+      const hold = dist > 7 ? this.speed * 0.7 : dist < 5 ? -this.speed * 0.5 : 0;
+      this.vel.x = flat.x * hold - flat.z * dirSign * this.speed * 0.8;
+      this.vel.z = flat.z * hold + flat.x * dirSign * this.speed * 0.8;
+    }
     this.attackCd -= dt;
     if (dist < this.meta.range && this.attackCd <= 0) {
       this.attackCd = 1.1;
@@ -166,7 +181,14 @@ export class Enemy {
   }
 
   _charger(dt, ctx, dist, flat) {
-    // wind up, then a committed lunge it cannot steer out of (comedic)
+    // telegraphed windup (frozen + ground ring), then a committed lunge it cannot
+    // steer out of (comedic). The ring makes the charge readable, not instinct.
+    if (this._chargeWind > 0) {
+      this._chargeWind -= dt;
+      this.vel.x = 0; this.vel.z = 0;
+      if (this._chargeWind <= 0) this.chargeT = 0.9;   // direction was locked at windup start — sidestep!
+      return;
+    }
     if (this.chargeT > 0) {
       this.chargeT -= dt;
       this.vel.x = this._chargeDir.x * this.speed * 3.2;
@@ -175,8 +197,11 @@ export class Enemy {
     } else {
       this.state = 'chase';
       this.attackCd -= dt;
-      if (dist < 14 && this.attackCd <= 0) { this.chargeT = 0.9; this._chargeDir = flat.clone(); this.attackCd = 2.4; ctx.audio && ctx.audio.sfx('gurg'); }
-      else { this.vel.x = flat.x * this.speed; this.vel.z = flat.z * this.speed; }
+      if (dist < 14 && this.attackCd <= 0) {
+        this._chargeWind = 0.4; this._chargeDir = flat.clone(); this.attackCd = 2.4;
+        ctx.onTelegraph && ctx.onTelegraph(this.pos.clone(), 1.7, 0.4, 0xffb454);
+        ctx.audio && ctx.audio.sfx('gurg');
+      } else { this.vel.x = flat.x * this.speed; this.vel.z = flat.z * this.speed; }
     }
   }
 
@@ -352,7 +377,11 @@ export class Enemy {
       return;
     }
     this.vel.x = flat.x * this.speed; this.vel.z = flat.z * this.speed;
-    if (dist < this.meta.range) { this.fuseT = 0.45; ctx.audio && ctx.audio.sfx('nadetick'); }
+    if (dist < this.meta.range) {
+      this.fuseT = 0.45;
+      ctx.onTelegraph && ctx.onTelegraph(this.pos.clone(), 4.4, 0.45, 0xff7a3d);  // the blast you're standing in
+      ctx.audio && ctx.audio.sfx('nadetick');
+    }
   }
   _detonate(ctx) {
     const R = 4.4;
@@ -494,11 +523,14 @@ export class Enemy {
     if (bulb) bulb.position.x = Math.sin(this.wobble * 0.7) * 0.08;
   }
 
-  _updateDeath(dt) {
+  _updateDeath(dt, ctx) {
     this.deathT -= dt;
     this.vel.y += -18 * dt;
     this.pos.addScaledVector(this.vel, dt);
-    if (this.pos.y < 0.1) { this.pos.y = 0.1; this.vel.set(0, 0, 0); }
+    // settle on the SAFETY floor, not a hardcoded 0.1 — over the escape track's
+    // void (floorY = -300) a punted corpse genuinely falls off the ring
+    const floor = (ctx && ctx.physics ? ctx.physics.floorY : 0) + 0.1;
+    if (this.pos.y < floor) { this.pos.y = floor; this.vel.set(0, 0, 0); }
     this.mesh.position.copy(this.pos);
     this.mesh.rotation.x += dt * 8;
     this.mesh.rotation.z += dt * 6;

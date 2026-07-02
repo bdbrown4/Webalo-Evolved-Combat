@@ -392,6 +392,7 @@ export class Game {
     this.players = [];
     clearGhosts(this);
     this._clearVehGhost();
+    if (this._pvpPads) { for (const pad of this._pvpPads) this.scene.remove(pad.mesh); this._pvpPads = null; }
     this._pvp = null; this._pvpNetState = null; this._clearPvpHud();
     clearPvpAvatars(this); this._pvpMe = null; this._pvpBoard = null; this._pvpGuests = null; this._myId = null;
     this._clearCoopHud();
@@ -427,6 +428,9 @@ export class Game {
         combatTargets: (shooter) => this._combatTargets(shooter),
         // co-op campaign: hold room-clear/advance while a squadmate is down (revive first).
         squadHeld: () => this._coopSquadHeld(),
+        // melee attack tokens: at most 3 swarmers press the attack on one player per
+        // frame — the rest circle at reach (Enemy._melee). Counters reset per frame.
+        meleeToken: (target) => { if (!target) return true; const n = target._meleeSlots || 0; if (n >= 3) return false; target._meleeSlots = n + 1; return true; },
         _g: this,
         spawnEnemy: (type, pos) => { const e = new Enemy(type, pos); this._scaleEnemy(e); this.enemies.push(e); this.scene.add(e.mesh); return e; },
         requestSpawn: (type, n, near) => { const cap = 28; for (let i = 0; i < n && this.enemies.filter((x) => !x.dead).length < cap; i++) { const p = near.clone().add(new THREE.Vector3((Math.random() - 0.5) * 6, 0, (Math.random() - 0.5) * 6)); const e = new Enemy(type, p); this._scaleEnemy(e); this.enemies.push(e); this.scene.add(e.mesh); if (this.level) { const r = this.level.segments[this.level.activeIndex]; if (r) r.enemies.push(e); } } },
@@ -1092,7 +1096,7 @@ export class Game {
     if (scoped !== this._scoped) { this._scoped = scoped; this.audio.sfx(scoped ? 'scopein' : 'scopeout'); }
 
     interpolateGhosts(this, dt);   // update ghost/host-avatar/vehicle positions before we ride them
-    if (this._pvp) interpPvp(this, dt);   // every other player's avatar
+    if (this._pvp) { interpPvp(this, dt); this._pvpAnimatePads(dt); }   // avatars + pads
     // PvP: the host owns our life. While dead we freeze (respawn overlay); on the
     // dead→alive edge we snap to our spawn (the host has already moved us there).
     const pvpDead = !!(this._pvp && this._pvpMe && this._pvpMe.dead);
@@ -1314,6 +1318,64 @@ export class Game {
     return out;
   }
 
+  // Weapon/health pads for Deathmatch: fixed, symmetric spots in the seeded arena.
+  // Both sides build the same pads; the HOST owns pickup/respawn state and mirrors
+  // it with pkt/pkr events, so map control is real (everyone starts rifle+pistol —
+  // the power weapons are ON the map).
+  _pvpBuildPads() {
+    const r = (this.level && this.level.segments[0]) || { cx: 0, cz: 0, w: 30, d: 40 };
+    const defs = [
+      { id: 0, type: 'health', x: r.cx, z: r.cz },
+      { id: 1, type: 'weapon', weapon: 'goocaster', x: r.cx - r.w * 0.3, z: r.cz },
+      { id: 2, type: 'weapon', weapon: 'boomstick', x: r.cx + r.w * 0.3, z: r.cz },
+    ];
+    this._pvpPads = defs.map((d) => {
+      const mesh = AssetFactory.pickup(d.type, d.weapon);
+      mesh.position.set(d.x, 0.9, d.z);
+      this.scene.add(mesh);
+      return { ...d, mesh, taken: false, respawnT: 0 };
+    });
+  }
+
+  // spin the pad diamonds (host + guest, every frame)
+  _pvpAnimatePads(dt) {
+    if (!this._pvpPads) return;
+    for (const pad of this._pvpPads) { pad.mesh.rotation.y += dt * 1.5; if (pad.mesh.userData.spin) pad.mesh.userData.spin.rotation.x += dt * 2; }
+  }
+
+  // HOST: resolve pad pickups + respawns (20s), mirroring state to guests.
+  _pvpUpdatePads(dt) {
+    if (!this._pvpPads) return;
+    for (const pad of this._pvpPads) {
+      if (pad.taken) {
+        pad.respawnT -= dt;
+        if (pad.respawnT <= 0) { pad.taken = false; pad.mesh.visible = true; this._netPush('pkr', pad.id); }
+        continue;
+      }
+      for (const p of this.players) {
+        if (!p || p.dead || p.downed) continue;
+        if (p.pos.distanceToSquared(pad.mesh.position) > 1.6 * 1.6) continue;
+        if (pad.type === 'health') {
+          if (p.health >= p.healthMax) continue;          // full — leave it for someone who needs it
+          p.addHealth(30);
+        } else p.giveWeapon(pad.weapon);
+        pad.taken = true; pad.respawnT = 20; pad.mesh.visible = false;
+        this.audio.sfx('pickup');
+        this._netPush('pkt', pad.id);
+        if (p === this.player) this.hud.banner(pad.type === 'health' ? '+30 HEALTH' : 'PICKED UP', pad.type === 'health' ? '' : pad.weapon.toUpperCase(), 0.9);
+        break;
+      }
+    }
+  }
+
+  // GUEST: a pad event from the host (taken / respawned).
+  _pvpPadNet(id, taken) {
+    const pad = this._pvpPads && this._pvpPads.find((x) => x.id === id);
+    if (!pad) return;
+    pad.taken = taken; pad.mesh.visible = !taken;
+    if (taken) this.audio.sfx('pickup');
+  }
+
   // Up to four spawns at the arena corners, each facing the centre.
   _pvpSpawns(n) {
     const r = (this.level && this.level.segments[0]) || { cx: 0, cz: 0, w: 30, d: 40 };
@@ -1391,6 +1453,7 @@ export class Game {
         myId: pid, team, players: peers.length + 1,
         spawn: { x: sp[pid].x, y: sp[pid].y, z: sp[pid].z, yaw: sp[pid].yaw } }, peerId);
     });
+    this._pvpBuildPads();
     this._ensurePvpHud();
     this.hud.banner(teams ? 'TEAM DEATHMATCH' : this._pvp.mode === 'duel' ? 'DUEL' : 'FREE-FOR-ALL', `First to ${this._pvp.fragLimit} frags${teams ? ' (team total)' : ''}.`, 2.6);
   }
@@ -1430,6 +1493,8 @@ export class Game {
   // HOST: deaths → frags → respawns → win. Runs each frame while a match is live.
   _pvpUpdate(dt) {
     if (!this._pvp) return;
+    this._pvpAnimatePads(dt);
+    this._pvpUpdatePads(dt);
     for (const p of this.players) {
       if (p._invulnT > 0) p._invulnT -= dt;            // spawn protection ticking down
       // frag attribution decays: a hit from a minute ago shouldn't claim a later self-kill
@@ -1500,6 +1565,7 @@ export class Game {
     this.player.downable = false; this.player._pid = d.myId; this.player._team = d.team;
     if (d.spawn) { this._mySpawn = new THREE.Vector3(d.spawn.x, d.spawn.y, d.spawn.z); this._mySpawn.yaw = d.spawn.yaw || Math.PI;
       this.player.pos.copy(this._mySpawn); this.player.yaw = this._mySpawn.yaw; this.player._syncCamera(this.settings, 0); }
+    this._pvpBuildPads();                      // host mirrors taken/respawn via pkt/pkr
     this._pvpAvatars = new Map();              // every OTHER player, drawn from snapshots
     this._pvpMe = null; this._pvpBoard = null; this._wasPvpDead = false;
     this._ensurePvpHud();
@@ -2105,6 +2171,7 @@ export class Game {
     }
     this.input.beginFrame();
     const ctx = this._ctx();
+    for (const pl of this.players) if (pl) pl._meleeSlots = 0;   // melee attack tokens (per frame)
 
     // ADS flag for FOV zoom + scope overlay (scoped weapons only, on foot only)
     this.settings._adsActive = this.input.isDown('ads') && this.player.weapon != null;

@@ -72,6 +72,9 @@ export class Physics {
       if (pos.x - radius >= c.max.x || pos.x + radius <= c.min.x ||
           pos.y >= c.max.y || pos.y + height <= c.min.y ||
           pos.z - radius >= c.max.z || pos.z + radius <= c.min.z) continue;
+      // step-up: a low ledge (≤0.45u above the feet) is climbed, not a wall —
+      // this is what makes ramps/kerbs/multi-height floors possible at all
+      if (axis !== 'y' && c.max.y - pos.y <= 0.45 && c.max.y - pos.y > 0) { pos.y = c.max.y + 0.001; continue; }
       if (axis === 'x') {
         if (vel.x > 0) pos.x = c.min.x - radius - 0.001;
         else if (vel.x < 0) pos.x = c.max.x + radius + 0.001;

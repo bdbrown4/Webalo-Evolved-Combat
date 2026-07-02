@@ -224,6 +224,8 @@ function applyEvent(game, ev) {
   else if (k === 'coopfail') game._showCoopFail(false);
   else if (k === 'frag') game.hud && game.hud.killFeed((ev[1] || '—') + ' ▸ ' + ev[2], ev[1] === '☠' ? 0x9aa7b3 : 0xff6a3d);
   else if (k === 'pvpover') game._guestPvpOver(ev[1], ev[2], ev[3], ev[4]);
+  else if (k === 'pkt') game._pvpPadNet(ev[1], true);        // deathmatch pad taken
+  else if (k === 'pkr') game._pvpPadNet(ev[1], false);       // deathmatch pad respawned
   else if (k === 'mountveh') game._guestEnterGunner(ev[1]);
   else if (k === 'vfire') {                                    // co-op turret: the guest's own shot
     game._spawnTracer(new THREE.Vector3(ev[1], ev[2], ev[3]), new THREE.Vector3(ev[4], ev[5], ev[6]));

@@ -197,8 +197,9 @@ export class Projectile {
       const tgts = ctx.combatTargets ? ctx.combatTargets(this.ownerPlayer) : ctx.enemies;   // enemies, or PvP foes
       for (const e of tgts) {
         if (e.dead) continue;
-        const d = e.aimPoint().distanceTo(this.pos);
-        if (d < r) e.takeDamage(this.damage * (1 - d / r) + this.damage * 0.4, { shieldMult: this.shieldMult, source: this.pos, attacker: this.ownerPlayer });
+        const d = e.aimPoint(_tp).distanceTo(this.pos);
+        if (d < r) e.takeDamage(this.damage * (1 - d / r) + this.damage * 0.4,
+          { shieldMult: this.shieldMult, source: this.pos, attacker: this.ownerPlayer, impulse: 5 + 7 * (1 - d / r) });
       }
       // your own grenades are not your friends (cooked too long / bounced back) —
       // and in co-op they're not your buddy's friends either. Skip anyone already

@@ -131,6 +131,7 @@ export class LevelBuilder {
       const fill = new THREE.PointLight(lightColor, 30, Math.max(sz.w, sz.d) * 1.5, 2);
       fill.position.set(0, sz.h - 1.2, cz);
       this.group.add(fill);
+      room.lights = [fill];                       // culled to the active room ± 1 in _activate
       if (enclosed) {
         for (let bz = zCursor + 3; bz < room.zBack - 2; bz += 5) {
           const beam = new THREE.Mesh(new THREE.BoxGeometry(sz.w - 0.5, 0.5, 0.45), wallMat);
@@ -237,10 +238,12 @@ export class LevelBuilder {
       chunk.rotation.set(d * 0.7, d * 1.3, d * 0.5);
       this.group.add(chunk);
     }
+    room.lights = room.lights || [];
     for (let i = 4; i < N; i += 8) {
       const p = pts[i];
       const l = new THREE.PointLight(accent.getHex(), 14, 30, 2);
       l.position.set(p.x, p.y + 4, p.z); this.group.add(l);
+      room.lights.push(l);              // culled with the room like every fill light
     }
 
     // Ring-debris fallen across the road: SOLID walls (AABB) that block the
@@ -324,6 +327,15 @@ export class LevelBuilder {
     if (i >= this.segments.length) { this._win(ctx); return; }
     this.activeIndex = i;
     const room = this.segments[i];
+    // light culling: fill lights (and pickup glows) only burn in the active room ± 1.
+    // The lighting pass otherwise scales with the whole mission, not where you are.
+    for (const r of this.segments) {
+      const on = Math.abs(r.index - i) <= 1;
+      if (r.lights) for (const l of r.lights) l.visible = on;
+    }
+    for (const p of this.pickups) {
+      if (p.mesh.userData.glow) p.mesh.userData.glow.visible = Math.abs(p.room.index - i) <= 1;
+    }
     ctx.onObjective && ctx.onObjective(room.seg.objectiveText);
     if (this._dialogueQueuedFor !== i) {
       this._dialogueQueuedFor = i;

@@ -6,6 +6,8 @@
 import * as THREE from 'three';
 import { Weapon, WEAPONS } from './Weapon.js';
 
+const _aimScratch = new THREE.Vector3();   // hot-loop target point (hitscan / aim cone)
+
 const SHIELD_MAX = 70;
 const HEALTH_MAX = 45;
 const SHIELD_REGEN_DELAY = 3.0;
@@ -117,10 +119,11 @@ export class Player {
     this.nadeEvent = 'cancelled';
   }
 
-  headPoint() { return new THREE.Vector3(this.pos.x, this.pos.y + this.curHeight * 0.92, this.pos.z); }
+  headPoint(out) { return (out || new THREE.Vector3()).set(this.pos.x, this.pos.y + this.curHeight * 0.92, this.pos.z); }
   // chest point — where shots and splash register when a Player is a combat target
-  // (PvP). Mirrors Enemy.aimPoint so the same hit/aim code works for either.
-  aimPoint() { return new THREE.Vector3(this.pos.x, this.pos.y + this.curHeight * 0.6, this.pos.z); }
+  // (PvP). Mirrors Enemy.aimPoint (incl. the optional scratch vector) so the same
+  // hit/aim code works for either.
+  aimPoint(out) { return (out || new THREE.Vector3()).set(this.pos.x, this.pos.y + this.curHeight * 0.6, this.pos.z); }
 
   lookDir() {
     return new THREE.Vector3(
@@ -350,7 +353,7 @@ export class Player {
     let best = null, bestDot = minDot;
     for (const e of (ctx.combatTargets ? ctx.combatTargets(this) : ctx.enemies)) {
       if (e.dead) continue;
-      const to = this._tmp.subVectors(e.aimPoint(), origin);
+      const to = this._tmp.subVectors(e.aimPoint(_aimScratch), origin);
       const dist = to.length();
       if (dist < 0.001 || dist > 90) continue;
       const dot = to.multiplyScalar(1 / dist).dot(dir);
@@ -376,10 +379,11 @@ export class Player {
     let target = null, headshot = false;
     for (const e of (ctx.combatTargets ? ctx.combatTargets(this) : ctx.enemies)) {
       if (e.dead) continue;
-      const hit = this._raySphere(origin, dir, e.aimPoint(), e.type === 'boss' ? 3.2 : 0.7);
+      const ap = e.aimPoint(_aimScratch);
+      const hit = this._raySphere(origin, dir, ap, e.type === 'boss' ? 3.2 : 0.7);
       if (hit !== null && hit < bestT) {
         bestT = hit; target = e;
-        const headY = e.aimPoint().y + (e.type === 'boss' ? 1.5 : 0.4);
+        const headY = ap.y + (e.type === 'boss' ? 1.5 : 0.4);
         const hitY = origin.y + dir.y * hit;
         headshot = hitY > headY - 0.15;
       }

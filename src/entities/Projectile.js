@@ -11,7 +11,7 @@ let _pidCounter = 1;
 
 // Closest approach of segment a→b to point p within radius r — the swept version
 // of a sphere test, so a fast projectile can't step past a body between frames.
-const _ab = new THREE.Vector3(), _ap = new THREE.Vector3(), _cl = new THREE.Vector3();
+const _ab = new THREE.Vector3(), _ap = new THREE.Vector3(), _cl = new THREE.Vector3(), _tp = new THREE.Vector3(), _prev = new THREE.Vector3();
 function segNearPoint(a, b, p, r) {
   _ab.subVectors(b, a);
   _ap.subVectors(p, a);
@@ -69,11 +69,11 @@ export class Projectile {
       let target = (this.homingTarget && !this.homingTarget.dead) ? this.homingTarget : null;
       if (!target) {
         this.homingTarget = null;
-        let bestD = 28;
+        let bestD2 = 28 * 28;
         for (const e of owned) {
           if (e.dead) continue;
-          const d = e.pos.distanceTo(this.pos);
-          if (d < bestD) { bestD = d; target = e; }
+          const d2 = e.pos.distanceToSquared(this.pos);
+          if (d2 < bestD2) { bestD2 = d2; target = e; }
         }
       }
       if (target) {
@@ -83,7 +83,7 @@ export class Projectile {
     }
 
     this.vel.y += this.gravity * dt;
-    const prev = this.pos.clone();
+    const prev = _prev.copy(this.pos);   // scratch: projectiles update one at a time
     this.pos.addScaledVector(this.vel, dt);
     if (this.type === 'shard') this.mesh.lookAt(this.pos.clone().add(this.vel));
     const isNade = this.type === 'grenade';
@@ -131,7 +131,7 @@ export class Projectile {
       for (const e of (targets || [])) {
         if (e.dead) continue;
         const hitR = Math.max(0.9, (e.radius || 0.55) * 0.9 + this.radius);
-        if (segNearPoint(prev, this.pos, e.aimPoint(), hitR)) {
+        if (segNearPoint(prev, this.pos, e.aimPoint(_tp), hitR)) {
           if (isNade) {
             if (this.sticky) return this._stickTo(e, ctx);
             // frag: glance off — the fuse does the killing
@@ -155,7 +155,7 @@ export class Projectile {
     } else if (this.owner === 'enemy' && ctx.players) {
       for (const pl of ctx.players) {
         if (!pl || pl.dead || pl.downed) continue;
-        if (segNearPoint(prev, this.pos, pl.aimPoint(), 1.0)) {
+        if (segNearPoint(prev, this.pos, pl.aimPoint(_tp), 1.0)) {
           pl.takeDamage(this.damage, this.pos);
           return this.splash ? this.explode(ctx) : this._impact(ctx);
         }

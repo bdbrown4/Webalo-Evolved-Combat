@@ -51,7 +51,9 @@ export class Enemy {
     this.hover = !!this.meta.hover;
   }
 
-  aimPoint() { return new THREE.Vector3(this.pos.x, this.pos.y + (this.mesh.userData.standHeight || 1), this.pos.z); }
+  // `out` is optional — hot loops (projectile sweeps, hitscan, homing) pass a
+  // scratch vector so the per-frame × per-enemy call doesn't allocate.
+  aimPoint(out) { return (out || new THREE.Vector3()).set(this.pos.x, this.pos.y + (this.mesh.userData.standHeight || 1), this.pos.z); }
 
   takeDamage(amount, opts = {}) {
     if (this.dead) return;
@@ -379,12 +381,12 @@ export class Enemy {
     this.attackCd -= dt;
     if (this.attackCd <= 0) {
       this.attackCd = 1.6;
-      let best = null, bestD = 16;
+      let best = null, bestD2 = 16 * 16;
       for (const e of (ctx.enemies || [])) {
         if (e === this || e.dead || e.meta.kind === 'medic') continue;
         if (e.hp >= e.maxHp && e.shield >= e.maxShield) continue;
-        const d = this.pos.distanceTo(e.pos);
-        if (d < bestD) { bestD = d; best = e; }
+        const d2 = this.pos.distanceToSquared(e.pos);
+        if (d2 < bestD2) { bestD2 = d2; best = e; }
       }
       if (best) {
         best.hp = Math.min(best.maxHp, best.hp + 14);
@@ -437,14 +439,18 @@ export class Enemy {
   }
 
   _integrate(dt, ctx) {
-    // separation from other enemies (gentle, so swarms don't stack)
+    // separation from other enemies (gentle, so swarms don't stack). This is the
+    // O(n²) loop a big Survival wave stresses: squared-distance early-out, one
+    // sqrt only for actually-overlapping pairs, zero allocation.
     if (ctx.enemies && this.type !== 'boss') {
       for (const o of ctx.enemies) {
         if (o === this || o.dead) continue;
-        const d = this.pos.distanceTo(o.pos);
-        if (d > 0.001 && d < this.radius + o.radius) {
-          const push = new THREE.Vector3().subVectors(this.pos, o.pos).setY(0).normalize().multiplyScalar((this.radius + o.radius - d) * 4);
-          this.vel.add(push);
+        const rr = this.radius + o.radius;
+        const dx = this.pos.x - o.pos.x, dz = this.pos.z - o.pos.z;
+        const d2 = dx * dx + dz * dz;
+        if (d2 > 1e-6 && d2 < rr * rr) {
+          const d = Math.sqrt(d2), k = ((rr - d) * 4) / d;
+          this.vel.x += dx * k; this.vel.z += dz * k;
         }
       }
     }

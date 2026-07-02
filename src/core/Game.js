@@ -48,6 +48,11 @@ function detectTouch() {
   return coarse || (noHover && hasTouch);
 }
 
+// Shared FX geometries: goo blobs / impact pips / explosion shells spawn dozens
+// of times a second in a big wave — one unit sphere each, scaled per mesh, and
+// flagged shared so the FX reaper doesn't dispose them out from under the next one.
+const FX_SPHERE = new THREE.SphereGeometry(1, 8, 6); FX_SPHERE.userData.shared = true;
+
 // PvP: seconds of spawn protection on (re)spawn. Drops early the moment a player
 // fires (Player._fire), so it shields against spawn-camping without enabling it.
 const PVP_SPAWN_INVULN = 2.5;
@@ -1874,7 +1879,8 @@ export class Game {
     this.fx.push({ mesh: line, life: 0.06, maxLife: 0.06, kind: 'tracer' });
   }
   _spawnImpact(p, kind) {
-    const m = new THREE.Mesh(new THREE.SphereGeometry(0.1, 6, 6), new THREE.MeshBasicMaterial({ color: kind === 'spark' ? 0xffd070 : 0x9cff9c }));
+    const m = new THREE.Mesh(FX_SPHERE, new THREE.MeshBasicMaterial({ color: kind === 'spark' ? 0xffd070 : 0x9cff9c, transparent: true }));
+    m.scale.setScalar(0.1);
     m.position.copy(p); this.scene.add(m);
     this.fx.push({ mesh: m, life: 0.18, maxLife: 0.18, kind: 'impact' });
   }
@@ -1889,7 +1895,8 @@ export class Game {
     this.fx.push({ mesh: ring, life: duration, maxLife: duration, kind: 'telegraph' });
   }
   _spawnExplosion(p, r) {
-    const m = new THREE.Mesh(new THREE.SphereGeometry(0.4, 12, 10), new THREE.MeshBasicMaterial({ color: 0xffa040, transparent: true, opacity: 0.85 }));
+    const m = new THREE.Mesh(FX_SPHERE, new THREE.MeshBasicMaterial({ color: 0xffa040, transparent: true, opacity: 0.85 }));
+    m.scale.setScalar(0.4);
     m.position.copy(p); this.scene.add(m);
     const light = new THREE.PointLight(0xffa040, 3, r * 3); light.position.copy(p); this.scene.add(light);
     this.fx.push({ mesh: m, life: 0.35, maxLife: 0.35, kind: 'boom', r, light });
@@ -2172,7 +2179,7 @@ export class Game {
       f.life -= dt;
       const t = Math.max(0, f.life / f.maxLife);
       if (f.kind === 'tracer' || f.kind === 'impact' || f.kind === 'muzzle') { if (f.mesh.material) f.mesh.material.opacity = t; }
-      if (f.kind === 'boom') { const s = 1 + (1 - t) * f.r; f.mesh.scale.setScalar(s); f.mesh.material.opacity = t * 0.85; if (f.light) f.light.intensity = 3 * t; }
+      if (f.kind === 'boom') { const s = 0.4 * (1 + (1 - t) * f.r); f.mesh.scale.setScalar(s); f.mesh.material.opacity = t * 0.85; if (f.light) f.light.intensity = 3 * t; }
       if (f.kind === 'telegraph') { if (f.mesh.material) f.mesh.material.opacity = 0.2 + 0.6 * (1 - t); } // brighten toward the hit
       if (f.kind === 'goo') {
         f.vel.y -= 18 * dt;
@@ -2183,8 +2190,8 @@ export class Game {
       if (f.life <= 0) {
         if (f.parent) f.parent.remove(f.mesh); else this.scene.remove(f.mesh);
         if (f.light) this.scene.remove(f.light);
-        // free the GPU resources — every fx kind makes its own geometry+material
-        if (f.mesh.geometry) f.mesh.geometry.dispose();
+        // free the GPU resources (shared/cached geometries are owned by their cache)
+        if (f.mesh.geometry && !f.mesh.geometry.userData.shared) f.mesh.geometry.dispose();
         if (f.mesh.material) f.mesh.material.dispose();
         this.fx.splice(i, 1);
       }
@@ -2210,8 +2217,8 @@ export class Game {
     if (this._reducedMotion) return;
     const c = color || 0x9cff9c;
     for (let i = 0; i < 7; i++) {
-      const m = new THREE.Mesh(new THREE.SphereGeometry(0.08 + Math.random() * 0.1, 6, 5),
-        new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: 0.9 }));
+      const m = new THREE.Mesh(FX_SPHERE, new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: 0.9 }));
+      m.scale.setScalar(0.08 + Math.random() * 0.1);
       m.position.set(pos.x, pos.y + 1.0, pos.z);
       this.scene.add(m);
       const a = Math.random() * Math.PI * 2, sp = 2 + Math.random() * 4.5;

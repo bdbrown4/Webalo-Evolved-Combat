@@ -9,7 +9,6 @@ import * as THREE from 'three';
 import { AssetFactory } from '../core/AssetFactory.js';
 
 const SIZE = { s: { w: 16, d: 16 }, m: { w: 22, d: 20 }, l: { w: 30, d: 26 } };
-const WALL_H = 6;
 const DOOR_W = 5;
 
 export class LevelBuilder {

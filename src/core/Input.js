@@ -19,11 +19,15 @@ export const GAMEPAD_MAP = [
   { label: 'Interact / revive', button: 'LB' },
   { label: 'Sprint', button: 'L3 / push stick' },
   { label: 'Crouch', button: 'R3 (click R-stick)' },
+  { label: 'Cycle grenade type', button: 'D-Pad ←' },
+  { label: 'Flashlight', button: 'D-Pad →' },
+  { label: 'Select weapon 1 / 2', button: 'D-Pad ↑ / ↓' },
   { label: 'Pause', button: 'Start' },
 ];
 export const GAMEPAD_BUTTONS = {
   fire: 'RT', ads: 'LT', jump: 'Ⓐ', melee: 'Ⓑ', reload: 'Ⓧ', swap: 'Ⓨ',
   grenade: 'RB', interact: 'LB', crouch: 'R3', pause: 'Start', sprint: 'L3',
+  nadeswap: 'D-Pad ←', flashlight: 'D-Pad →', weapon1: 'D-Pad ↑', weapon2: 'D-Pad ↓',
   forward: 'Left Stick', back: 'Left Stick', left: 'Left Stick', right: 'Left Stick',
 };
 
@@ -88,6 +92,7 @@ export class Input {
     let gp = null;
     for (const p of pads) { if (p && p.connected) { gp = p; break; } }
     this._gpActive = !!gp;
+    this._gp = gp;                       // kept for rumble()
     const next = new Set();
     if (gp) {
       // padSensitivity is capped at 2.0 so even a stale higher saved value can't push
@@ -113,6 +118,9 @@ export class Input {
       if (down(5)) next.add('grenade');   if (down(4)) next.add('interact');
       if (down(10)) next.add('sprint');   // L3: click-to-sprint (or push the stick fully)
       if (down(11)) next.add('crouch');   // R3: click the right stick to crouch
+      // D-pad (free during play; menus poll it separately via pollMenuNav)
+      if (down(12)) next.add('weapon1');  if (down(13)) next.add('weapon2');
+      if (down(14)) next.add('nadeswap'); if (down(15)) next.add('flashlight');
       const start = down(9);
       if (start && !this._gpStartPrev) this._gpStartEdge = true;
       this._gpStartPrev = start;
@@ -126,6 +134,14 @@ export class Input {
     this._gpAsserted = next;
   }
   consumeGamepadPause() { const e = this._gpStartEdge; this._gpStartEdge = false; return e; }
+
+  // Haptic pulse on whatever pad is active (no-op without one). Fire-and-forget;
+  // not all pads/browsers expose an actuator, so everything is guarded.
+  rumble(strong = 0.6, ms = 120) {
+    const act = this._gp && this._gp.vibrationActuator;
+    if (!act || !act.playEffect) return;
+    try { act.playEffect('dual-rumble', { duration: ms, strongMagnitude: Math.min(1, strong), weakMagnitude: Math.min(1, strong * 0.6) }); } catch (e) { /* unsupported */ }
+  }
 
   // Menu navigation from the pad, separate from gameplay polling. Directions
   // (D-pad / left stick) AUTO-REPEAT — fire on press, then again after a short

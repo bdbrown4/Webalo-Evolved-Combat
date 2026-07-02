@@ -143,6 +143,9 @@ export class Player {
     amount *= this.dmgTakenMult; // difficulty scaling
     this.regenT = 0;
     this.lastHitFlash = 0.3;
+    // where the hit came from — drives the HUD's directional damage arc
+    const src = opts && (opts.isVector3 ? opts : opts.source);
+    if (src && src.isVector3) { this._hitFromX = src.x; this._hitFromZ = src.z; this._hitFromT = 0.7; }
     const wasShielded = this.shield > 0;
     if (this.shield > 0) {
       this.shield -= amount;
@@ -190,6 +193,7 @@ export class Player {
       if (!this._gunner) this._combat(dt, input, ctx);
       if (this.meleeCd > 0) this.meleeCd -= dt;
       if (this.lastHitFlash > 0) this.lastHitFlash -= dt;
+    if (this._hitFromT > 0) this._hitFromT -= dt;
       if (this.justFired > 0) this.justFired -= dt;
       return;
     }
@@ -198,6 +202,7 @@ export class Player {
       this._regen(dt, ctx);
       if (this.weapon) this.weapon.update(dt);
       if (this.lastHitFlash > 0) this.lastHitFlash -= dt;
+    if (this._hitFromT > 0) this._hitFromT -= dt;
       return;
     }
     this._look(input, settings);
@@ -207,6 +212,7 @@ export class Player {
     this._combat(dt, input, ctx);
     if (this.meleeCd > 0) this.meleeCd -= dt;
     if (this.lastHitFlash > 0) this.lastHitFlash -= dt;
+    if (this._hitFromT > 0) this._hitFromT -= dt;
     if (this.justFired > 0) this.justFired -= dt;
     this._syncCamera(settings, dt);
   }
@@ -520,6 +526,12 @@ export class Player {
       cook: this.cooking ? (this.cooking.sticky ? 1 : Math.max(0, this.cooking.fuse / this.cooking.max)) : null,
       dmgSfx: this._consumeDmgSfx(), hitFlash: this.lastHitFlash > 0,
       lowShield: this.shield <= 0 && this.health < this.healthMax * 0.5,
+      // screen-relative bearing of the latest hit (0 = ahead, +right), or null.
+      // Same projection the motion tracker uses.
+      hitDir: this._hitFromT > 0
+        ? Math.atan2(-(this._hitFromX - this.pos.x) * Math.cos(this.yaw) + (this._hitFromZ - this.pos.z) * Math.sin(this.yaw),
+                     (this._hitFromX - this.pos.x) * Math.sin(this.yaw) + (this._hitFromZ - this.pos.z) * Math.cos(this.yaw))
+        : null,
     };
   }
   _consumeDmgSfx() { const s = this._dmgSfx; this._dmgSfx = null; return s; }

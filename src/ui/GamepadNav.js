@@ -45,7 +45,7 @@ export class GamepadNav {
     if (nav.right) this._adjust(cur, 1);
     if (nav.confirm && cur) this._activate(cur);
     if (nav.back) {
-      const b = this.root.querySelector('[data-act="back"], [data-act="cancel"], [data-act="resume"], [data-act="leave"], [data-act="menu"]');
+      const b = this.root.querySelector('[data-act="back"], [data-act="cancel"], [data-act="resume"], [data-act="leave"], [data-act="menu"], [data-act="skip"]');
       if (b && b.offsetParent !== null) b.click();
     }
   }

@@ -14,16 +14,17 @@
 // and a one-shot tapFire flag, plus runs soft aim-assist off the centred reticle.
 
 const MOVE_ACTIONS = ['forward', 'back', 'left', 'right', 'sprint'];
-const ALL_ACTIONS = [...MOVE_ACTIONS, 'fire', 'ads', 'jump', 'grenade', 'swap', 'interact', 'reload', 'melee'];
+const ALL_ACTIONS = [...MOVE_ACTIONS, 'fire', 'ads', 'jump', 'grenade', 'swap', 'interact', 'reload', 'melee', 'crouch', 'nadeswap', 'flashlight'];
 
 // Touch look feels right at ~3x the mouse path (default sensitivity 1.0): a
 // thumb swipe of ~200px turns ~75° on foot. Respects the sensitivity slider.
 const LOOK = 3.0;
 
 export class TouchControls {
-  constructor(root, input, handlers = {}) {
+  constructor(root, input, handlers = {}, settings = null) {
     this.input = input;
     this.h = handlers;            // { onPause }
+    this.settings = settings;     // mirrors the layout when gameplay.leftHanded flips
     this._moveId = null;
     this._lookId = null;
     this._secondId = null;
@@ -49,6 +50,11 @@ export class TouchControls {
         <button class="tc-btn tc-md" data-tap="grenade" aria-label="Grenade">NADE</button>
         <button class="tc-btn tc-md" data-hold="jump" aria-label="Jump">JUMP</button>
       </div>
+      <div class="tc-util">
+        <button class="tc-btn tc-mini" data-hold="crouch" aria-label="Crouch">DUCK</button>
+        <button class="tc-btn tc-mini" data-tap="nadeswap" aria-label="Cycle grenade type">N-TYPE</button>
+        <button class="tc-btn tc-mini" data-tap="flashlight" aria-label="Flashlight">TORCH</button>
+      </div>
 
       <button class="tc-btn tc-mini tc-pause" data-act="pause" aria-label="Pause">❚❚</button>
       <button class="tc-btn tc-use hidden" data-hold="interact" aria-label="Use">USE</button>
@@ -57,6 +63,11 @@ export class TouchControls {
     `;
     root.appendChild(this.el);
     this._bind();
+    if (settings) {
+      const applyHand = () => this.el.classList.toggle('lefty', !!settings.data.gameplay?.leftHanded);
+      applyHand();
+      settings.onChange(applyHand);
+    }
   }
 
   show() {

@@ -141,7 +141,7 @@ export class Game {
     this.isTouch = detectTouch();
     if (this.isTouch) document.documentElement.classList.add('touch');
     this.touch = this.isTouch
-      ? new TouchControls(root, this.input, { onPause: () => { if (this.state === 'playing') this.togglePause(); } })
+      ? new TouchControls(root, this.input, { onPause: () => { if (this.state === 'playing') this.togglePause(); } }, settings)
       : null;
 
     this._bindResize();
@@ -1159,6 +1159,10 @@ export class Game {
     const drop = (prev.h - health) + (prev.s - shield);
     if (drop < 0.5) return false;
     this.audio.sfx(prev.s > 0 && shield <= 0 ? 'shieldbreak' : shield > 0 ? 'shieldhit' : 'hurt');
+    if (this.settings.data.gameplay && this.settings.data.gameplay.haptics) {
+      this.input.rumble(0.5, 130);
+      if (this.isTouch && navigator.vibrate) { try { navigator.vibrate(40); } catch (e) {} }
+    }
     return true;   // caller sets hs.hitFlash for this frame
   }
 
@@ -2036,13 +2040,30 @@ export class Game {
     else this.renderer.render(this.scene, this.camera);
   }
 
+  // Untaken pickups for the motion tracker (small gold squares on the dial).
+  _trackerExtras() {
+    if (!this.level || !this.level.pickups) return null;
+    const out = this._trackerScratch || (this._trackerScratch = { pickups: [] });
+    out.pickups.length = 0;
+    for (const p of this.level.pickups) if (!p.taken) out.pickups.push({ x: p.pos.x, z: p.pos.z });
+    return out;
+  }
+
   // Soft aim-assist for touch on foot. The reticle stays centred and the player
   // drags to look; here we find the nearest enemy inside a screen-centre cone and
   // pull the view GENTLY toward it — stronger while firing, fading to nothing at
   // the cone's edge — so shots land without pixel-perfect thumbs. It's a nudge,
   // never a lock: the player's own drag always overrides it. Works in world
   // angles (not mouseDX) so its feel is independent of the sensitivity slider.
-  _touchAssist(dt) {
+  _aimAssistOn() {
+    const mode = (this.settings.data.gameplay && this.settings.data.gameplay.aimAssist) || 'auto';
+    if (mode === 'off') return 0;
+    const padActive = this.input.lastSource === 'pad';
+    if (mode === 'auto') return (this.isTouch || padActive) ? 1 : 0;   // thumbs get help, mouse doesn't
+    return (this.isTouch || padActive) ? (mode === 'high' ? 1.45 : 0.7) : 0;
+  }
+
+  _touchAssist(dt, strength = 1) {
     const p = this.player;
     if (!p || p.dead || !p.weapon) return;
     this.camera.updateMatrixWorld();
@@ -2065,7 +2086,7 @@ export class Game {
     while (dyaw > Math.PI) dyaw -= Math.PI * 2; while (dyaw < -Math.PI) dyaw += Math.PI * 2;
     const firing = this.input.isDown('fire');
     const fade = 1 - bestD / CONE;     // full strength near centre, zero at the edge
-    const k = Math.min(0.5, dt * (firing ? 8 : 3) * fade);
+    const k = Math.min(0.5, dt * (firing ? 8 : 3) * fade * strength);
     p.yaw += dyaw * k;
     p.pitch += (desiredPitch - p.pitch) * k;
     const lim = Math.PI / 2 - 0.02;
@@ -2101,8 +2122,9 @@ export class Game {
       this.player.pos.copy(this.vehicle.pos);
       this.player.yaw = this.vehicle.heading;
       if (gun && this._guestPlayer) this._guestPlayer.pos.copy(this.vehicle.pos);
-    } else if (this.isTouch) {
-      this._touchAssist(dt);                       // soft aim magnetism off the centred reticle
+    } else {
+      const assist = this._aimAssistOn();          // touch + controller magnetism (Settings ▸ Gameplay)
+      if (assist > 0) this._touchAssist(dt, assist);
     }
     // advance any co-op/dummy players sharing the world
     for (const rp of this.players) { if (rp !== this.player) this._updateRemotePlayer(rp, dt, ctx); }
@@ -2123,7 +2145,13 @@ export class Game {
     hs.scoped = scoped;
     hs.scopeZoom = scoped ? this.player.weapon.def.adsZoom : 0;
     hs.driving = this.player.driving;
-    if (hs.dmgSfx) this.audio.sfx(hs.dmgSfx);
+    if (hs.dmgSfx) {
+      this.audio.sfx(hs.dmgSfx);
+      if (this.settings.data.gameplay && this.settings.data.gameplay.haptics) {
+        this.input.rumble(hs.dmgSfx === 'shieldbreak' ? 0.9 : 0.5, 130);
+        if (this.isTouch && navigator.vibrate) { try { navigator.vibrate(40); } catch (e) {} }
+      }
+    }
 
     // enemies
     for (const e of this.enemies) { e.update(dt, ctx); if (e.dead && !e._killHandled) { e._killHandled = true; this._onEnemyKilled(e); } }
@@ -2150,7 +2178,8 @@ export class Game {
     // signature ring drift
     if (this.aureole) this.aureole.rotation.z += dt * 0.01;
 
-    // HUD
+    // HUD (tracker blips: untaken pickups, drawn shape-coded on the dial)
+    hs.tracker = this._trackerExtras();
     this.hud.update(dt, hs, this.enemies, this.player);
     // solo driver-gunner sees the free turret reticle; the co-op host only drives (the guest aims), so hide it
     this.hud.setTurret(this.vehicle && this.coopRole !== 'host' ? { x: this.vehicle.aim.x, y: this.vehicle.aim.y, locked: !!this.vehicle.lockedTarget } : null);

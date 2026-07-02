@@ -174,4 +174,8 @@ export class Audio {
   }
 
   stopAll() { this._track = null; this._stopMusic(); }
+
+  // Quiet ambient bed for the menus — called from any menu click, so it starts
+  // with the first user gesture (autoplay policy) and never stacks.
+  menuMusic() { if (this.ctx && !this._track) this.setTrack('ambient'); }
 }

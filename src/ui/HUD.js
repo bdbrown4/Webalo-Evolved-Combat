@@ -10,11 +10,12 @@ export class HUD {
     this.el.id = 'hud';
     this.el.innerHTML = `
       <div id="reticle"><span class="r up"></span><span class="r down"></span><span class="r left"></span><span class="r right"></span></div>
+      <div id="dmg-dir"><div class="dd-arc"></div></div>
       <div id="turret-reticle" class="hidden"><span class="tr-ring"></span><span class="tr-dot"></span></div>
       <div id="cook" class="hidden"><div class="cook-fill"></div></div>
       <div id="scope" class="hidden"><div class="scope-cross h"></div><div class="scope-cross v"></div><div class="scope-zoom"></div></div>
       <div class="objective"><div class="o-label">Objective</div><div class="o-text" id="o-text">—</div></div>
-      <div id="boss-bar" class="hidden"><div class="bb-name"></div><div class="bb-track"><div class="bb-fill"></div></div><div class="bb-phase"></div></div>
+      <div id="boss-bar" class="hidden"><div class="bb-name"></div><div class="bb-strack hidden"><div class="bb-sfill"></div></div><div class="bb-track"><div class="bb-fill"></div></div><div class="bb-phase"></div></div>
       <div id="miniboss-bar" class="hidden">
         <div class="mb-head"><span class="mb-tag">◆ Mini-Boss</span><span class="mb-name"></span></div>
         <div class="mb-bar mb-shield-bar"><div class="mb-shield"></div></div>
@@ -29,7 +30,7 @@ export class HUD {
       <div class="ammo" id="ammo-box">
         <div class="wname" id="w-name">—</div>
         <div class="count"><span id="ammo-cur">0</span><span class="reserve">/<span id="ammo-res">0</span></span></div>
-        <div class="nades">Grenade: <b id="nade-type">FRAG</b> <span id="nade-count">x2</span></div>
+        <div class="nades" id="nade-line"></div>
         <div class="wstow" id="w-stow"></div>
         <div class="wmode" id="w-mode"></div>
       </div>
@@ -41,6 +42,9 @@ export class HUD {
     `;
     root.appendChild(this.el);
     this.flash = document.createElement('div'); this.flash.id = 'damage-flash'; root.appendChild(this.flash);
+    const applyScale = () => { const z = (settings.data.gameplay && settings.data.gameplay.hudScale) || 1; this.el.style.zoom = z; };
+    applyScale();
+    settings.onChange(applyScale);
 
     this.$ = (id) => this.el.querySelector(id);
     this.shieldFill = this.$('#shield-bar .fill');
@@ -154,8 +158,12 @@ export class HUD {
     if (resTail) resTail.style.display = state.noReserve ? 'none' : '';
     const nades = this.$('#ammo-box').querySelector('.nades');
     if (nades) nades.style.display = state.noReserve ? 'none' : '';
-    this.$('#nade-type').textContent = state.grenadeType.toUpperCase();
-    this.$('#nade-count').textContent = 'x' + state.grenades[state.grenadeType];
+    // both grenade types at once, the selected one highlighted (cycle key exists
+    // on every input device now)
+    const nl = this.$('#nade-line');
+    const nadeHtml = (key, label) => state.grenadeType === key
+      ? `<b>${label} x${state.grenades[key]}</b>` : `<span class="dim">${label} x${state.grenades[key]}</span>`;
+    nl.innerHTML = nadeHtml('frag', 'FRAG') + ' · ' + nadeHtml('goober', 'GOO');
     this.$('#ammo-box').classList.toggle('reloading', state.reloading);
     this.$('#w-stow').textContent = state.stowed ? '⇆ ' + state.stowed : '';
     this.$('#w-mode').textContent = state.altName ? '⊳ ADS · ' + state.altName : '';
@@ -185,10 +193,20 @@ export class HUD {
     this.$('#reticle').classList.toggle('hidden', !!state.scoped || !!state.driving);
     if (state.scoped) scope.querySelector('.scope-zoom').textContent = state.scopeZoom.toFixed(1) + '×';
 
-    // damage vignette
+    // damage vignette — reduced-flash mode (setting or prefers-reduced-motion)
+    // swaps the hard full-screen flash for a calmer, smaller pulse
+    const reduced = this.settings.data.gameplay && this.settings.data.gameplay.reducedFlash;
+    this.flash.classList.toggle('reduced', !!reduced);
     this.flash.classList.toggle('lowshield', state.lowShield);
-    if (state.hitFlash) { this.flash.style.boxShadow = 'inset 0 0 220px rgba(255,40,40,0.5)'; }
+    if (state.hitFlash) { this.flash.style.boxShadow = reduced ? 'inset 0 0 60px rgba(255,40,40,0.28)' : 'inset 0 0 220px rgba(255,40,40,0.5)'; }
     else { this.flash.style.boxShadow = 'none'; }
+
+    // directional damage arc: rotate toward the hit's screen bearing
+    const dd = this.$('#dmg-dir');
+    if (state.hitDir != null) {
+      dd.classList.add('show');
+      dd.style.transform = 'rotate(' + state.hitDir + 'rad)';
+    } else dd.classList.remove('show');
 
     // subtitles
     this._subT -= dt;
@@ -216,6 +234,9 @@ export class HUD {
       bb.classList.remove('hidden');
       bb.querySelector('.bb-name').textContent = (boss.meta && boss.meta.name) || 'BOSS';
       bb.querySelector('.bb-fill').style.width = (100 * Math.max(0, boss.hp) / boss.maxHp) + '%';
+      const st = bb.querySelector('.bb-strack');
+      st.classList.toggle('hidden', !boss.maxShield);
+      if (boss.maxShield) bb.querySelector('.bb-sfill').style.width = (100 * Math.max(0, boss.shield) / boss.maxShield) + '%';
       bb.querySelector('.bb-phase').textContent = 'Phase ' + (boss.bossPhase || 1) + ' / 3';
     } else {
       bb.classList.add('hidden');
@@ -237,10 +258,10 @@ export class HUD {
       this._minibossOn = false;
     }
 
-    this._drawTracker(enemies, player);
+    this._drawTracker(enemies, player, state.tracker);
   }
 
-  _drawTracker(enemies, player) {
+  _drawTracker(enemies, player, extras) {
     if (!this.settings.data.video.motionTracker) { this.tracker.style.display = 'none'; return; }
     this.tracker.style.display = 'block';
     const c = this.tctx, W = 132, H = 132, cx = W / 2, cy = H / 2, R = 60, range = 34;
@@ -254,19 +275,35 @@ export class HUD {
     c.fillStyle = '#5fd0e6'; c.beginPath(); c.moveTo(cx, cy - 6); c.lineTo(cx - 4, cy + 4); c.lineTo(cx + 4, cy + 4); c.closePath(); c.fill();
     if (!player) return;
     const yaw = player.yaw;
-    for (const e of enemies) {
-      if (e.dead) continue;
-      const dx = e.pos.x - player.pos.x, dz = e.pos.z - player.pos.z;
+    // project world offset onto the player's facing axes: forward = up on the
+    // dial, screen-right = right (right vector is (-cos yaw, sin yaw) here)
+    const proj = (wx, wz) => {
+      const dx = wx - player.pos.x, dz = wz - player.pos.z;
       const d = Math.hypot(dx, dz);
-      if (d > range) continue;
-      // project onto the player's facing axes: forward = up on the dial,
-      // screen-right = right (right vector is (-cos yaw, sin yaw) in this world)
+      if (d > range) return null;
       const rx = -dx * Math.cos(yaw) + dz * Math.sin(yaw);
       const rz = dx * Math.sin(yaw) + dz * Math.cos(yaw);
-      const px = cx + (rx / range) * R;
-      const py = cy - (rz / range) * R;
+      return { x: cx + (rx / range) * R, y: cy - (rz / range) * R };
+    };
+    // pickups: small gold squares (shape-coded, like everything on the dial)
+    if (extras && extras.pickups) {
+      c.fillStyle = '#ffd35a';
+      for (const p of extras.pickups) {
+        const q = proj(p.x, p.z);
+        if (q) c.fillRect(q.x - 2, q.y - 2, 4, 4);
+      }
+    }
+    for (const e of enemies) {
+      if (e.dead) continue;
+      const q = proj(e.pos.x, e.pos.z);
+      if (!q) continue;
+      // triangles for hostiles, a larger diamond for the boss — readable by
+      // SHAPE, not just hue (color-vision friendly)
       c.fillStyle = e.type === 'boss' ? '#ff5a8c' : '#ff5a5a';
-      c.beginPath(); c.arc(px, py, e.type === 'boss' ? 5 : 3, 0, Math.PI * 2); c.fill();
+      c.beginPath();
+      if (e.type === 'boss') { c.moveTo(q.x, q.y - 6); c.lineTo(q.x + 5, q.y); c.lineTo(q.x, q.y + 6); c.lineTo(q.x - 5, q.y); }
+      else { c.moveTo(q.x, q.y - 4); c.lineTo(q.x + 3.4, q.y + 3); c.lineTo(q.x - 3.4, q.y + 3); }
+      c.closePath(); c.fill();
     }
   }
 }

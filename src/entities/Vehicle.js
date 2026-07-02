@@ -134,6 +134,16 @@ export class Vehicle {
       }
       if (!best) endPoint = origin.clone().addScaledVector(dir, 80);
     }
+    // occlusion: the turret can't lock or kill through the debris you're meant to
+    // slalom around — one ray against the final candidate per frame; a blocked
+    // shot sparks on the obstacle instead of passing through it
+    if (best && ctx.physics) {
+      const to = best.aimPoint().sub(origin);
+      const d = to.length();
+      to.multiplyScalar(1 / Math.max(1e-6, d));
+      const wall = ctx.physics.raycastWorld(origin, to, d);
+      if (wall < d - 0.2) { endPoint = origin.clone().addScaledVector(to, wall); best = null; }
+    }
     this.lockedTarget = best;
 
     this.fireCd -= dt;

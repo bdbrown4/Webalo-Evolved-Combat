@@ -9,6 +9,18 @@ import { AssetFactory } from '../core/AssetFactory.js';
 
 let _pidCounter = 1;
 
+// Closest approach of segment a→b to point p within radius r — the swept version
+// of a sphere test, so a fast projectile can't step past a body between frames.
+const _ab = new THREE.Vector3(), _ap = new THREE.Vector3(), _cl = new THREE.Vector3();
+function segNearPoint(a, b, p, r) {
+  _ab.subVectors(b, a);
+  _ap.subVectors(p, a);
+  const len2 = _ab.lengthSq();
+  const t = len2 > 1e-8 ? Math.max(0, Math.min(1, _ap.dot(_ab) / len2)) : 0;
+  _cl.copy(a).addScaledVector(_ab, t);
+  return _cl.distanceToSquared(p) < r * r;
+}
+
 export class Projectile {
   constructor(opts) {
     this.id = _pidCounter++;          // stable id for co-op ghost reconciliation
@@ -111,11 +123,15 @@ export class Projectile {
     }
     this.mesh.position.copy(this.pos);
 
-    // entity collision
-    if (this.owner === 'player' && (ctx.combatTargets ? ctx.combatTargets(this.ownerPlayer) : ctx.enemies)) {
-      for (const e of (ctx.combatTargets ? ctx.combatTargets(this.ownerPlayer) : ctx.enemies)) {
+    // entity collision — SWEPT: test the segment travelled this frame against a
+    // sphere sized to the target, so fast shards can't step past a body between
+    // frames and big targets (the boss is radius 3) are hittable across their bulk.
+    if (this.owner === 'player') {
+      const targets = ctx.combatTargets ? ctx.combatTargets(this.ownerPlayer) : ctx.enemies;
+      for (const e of (targets || [])) {
         if (e.dead) continue;
-        if (this.pos.distanceTo(e.aimPoint()) < 0.9) {
+        const hitR = Math.max(0.9, (e.radius || 0.55) * 0.9 + this.radius);
+        if (segNearPoint(prev, this.pos, e.aimPoint(), hitR)) {
           if (isNade) {
             if (this.sticky) return this._stickTo(e, ctx);
             // frag: glance off — the fuse does the killing
@@ -139,7 +155,7 @@ export class Projectile {
     } else if (this.owner === 'enemy' && ctx.players) {
       for (const pl of ctx.players) {
         if (!pl || pl.dead || pl.downed) continue;
-        if (this.pos.distanceTo(pl.headPoint()) < 1.0) {
+        if (segNearPoint(prev, this.pos, pl.aimPoint(), 1.0)) {
           pl.takeDamage(this.damage, this.pos);
           return this.splash ? this.explode(ctx) : this._impact(ctx);
         }

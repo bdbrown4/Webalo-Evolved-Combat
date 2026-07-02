@@ -334,6 +334,7 @@ export class Menus {
 
   showCredits() {
     this.clear();
+    this.screen = 'credits';
     this.el.innerHTML = `
       <div class="screen">
         <div class="panel" style="max-width:560px">
@@ -407,6 +408,7 @@ export class Menus {
   showMissionSelect() {
     const p = loadProgress();
     this.clear();
+    this.screen = 'select';
     this.el.innerHTML = `
       <div class="screen">
         <div class="title-block"><div class="game-sub" style="color:var(--ink)">Mission Select</div></div>
@@ -433,6 +435,7 @@ export class Menus {
   showSettings(tab, onBack, { fromPause = false } = {}) {
     this._settingsBack = onBack;
     this.clear();
+    this.screen = 'settings';
     this.el.innerHTML = `
       <div class="screen">
         <div class="panel">

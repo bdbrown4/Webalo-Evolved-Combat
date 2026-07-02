@@ -37,9 +37,13 @@ export class Enemy {
     this.bossTell = 0;          // telegraph windup before a boss attack
     this.bossAttack = null;
     this.charging = 0;          // boss lunge timer
+    this._chargeHit = false;    // boss lunge: landed its (single) hit this charge
     this.spiralT = 0;           // boss spiral-spray timer
     this.spiralCd = 0;
     this.spiralAngle = 0;
+    this.flashT = 0;            // hit flash countdown (frame-driven, no timers)
+    this.shieldFlashT = 0;
+    this.plateFlashT = 0;
     this.mesh = AssetFactory.enemy(type);
     this.mesh.position.copy(this.pos);
     this.radius = type === 'boss' ? 3.0 : type === 'sprocket' ? 1.1 : (this.meta.kind === 'charger' ? 1.0 : 0.55);
@@ -60,11 +64,7 @@ export class Enemy {
         const face = new THREE.Vector3(Math.sin(this.facing), 0, Math.cos(this.facing));
         if (toSrc.dot(face) > 0.35) {
           amount *= 0.15;
-          const plate = this.mesh.userData.plate;
-          if (plate && plate.material.emissive) {
-            plate.material.emissive.setHex(0x9fd0ff); plate.material.emissiveIntensity = 0.9;
-            setTimeout(() => { if (plate.material) plate.material.emissiveIntensity = 0; }, 80);
-          }
+          this.plateFlashT = 0.08;               // deflect glint, ticked in _animate
         }
       }
     }
@@ -79,22 +79,21 @@ export class Enemy {
       this._flashShield();
     }
     this.hp -= dmg;
-    this._flashHit();
+    this.flashT = 0.06;
+    // knockback: shots with punch (boomstick pellets/slug, explosions) shove the
+    // body through the same velocity the death tumble uses. The boss holds its ground.
+    if (opts.impulse && opts.source && this.type !== 'boss' && !this.hover) {
+      const away = this._tmp3().subVectors(this.pos, opts.source).setY(0);
+      if (away.lengthSq() > 0.001) this.vel.addScaledVector(away.normalize(), opts.impulse);
+    }
     this.alertT = 6; this.state = this.state === 'idle' ? 'alert' : this.state;
     if (this.hp <= 0) this._die(opts.source);
   }
 
-  _flashHit() {
-    const b = this.mesh.userData.body;
-    if (!b) return;
-    b.material.emissive && b.material.emissive.setHex(0xffffff);
-    b.material.emissiveIntensity = 0.6;
-    setTimeout(() => { if (b.material) { b.material.emissive.setHex(this.type === 'wobbler' ? 0x0 : 0x0); b.material.emissiveIntensity = 0; } }, 60);
-  }
-  _flashShield() {
-    const bub = this.mesh.userData.shieldBubble;
-    if (bub) { bub.material.opacity = 0.5; setTimeout(() => { if (bub.material) bub.material.opacity = 0.18; }, 80); }
-  }
+  _tmp3() { return (this._scratch || (this._scratch = new THREE.Vector3())).set(0, 0, 0); }
+
+  // flash decay is frame-driven in _animate — no setTimeout races with pause/death
+  _flashShield() { this.shieldFlashT = 0.08; }
 
   _die(source) {
     this.dead = true;
@@ -112,9 +111,13 @@ export class Enemy {
     if (this.dead) return this._updateDeath(dt);
 
     // co-op: lock onto the nearest LIVING player (solo = the one player). A downed
-    // player is ignored; if everyone's down there's nothing to chase, so coast.
+    // player is ignored; if everyone's down there's nothing to chase, so coast —
+    // but a lit popper fuse still burns down (it must never freeze mid-tick).
     const player = (ctx.nearestPlayer && ctx.nearestPlayer(this.pos)) || (ctx.player && !ctx.player.dead && !ctx.player.downed ? ctx.player : null);
-    if (!player) { this._integrate(dt, ctx); this._animate(dt); return; }
+    if (!player) {
+      if (this.fuseT > 0) { this.fuseT -= dt; if (this.fuseT <= 0) this._detonate(ctx); }
+      this._integrate(dt, ctx); this._animate(dt); return;
+    }
     this.target = player;
     const toPlayer = new THREE.Vector3().subVectors(player.pos, this.pos);
     const dist = toPlayer.length();
@@ -210,7 +213,14 @@ export class Enemy {
     if (this.charging > 0) {                 // committed lunge (dodge by sidestep)
       this.charging -= dt;
       this.vel.x = this._chargeDir.x * this.speed * 5.5; this.vel.z = this._chargeDir.z * this.speed * 5.5;
-      if (dist < 4) { this.target.takeDamage(this.meta.dmg, this.pos); ctx.shake && ctx.shake(0.3); }
+      // ONE hit per charge (this ran per-frame once — ~30 stacked hits, a one-touch
+      // kill), and it clips anyone in the path, not just the locked target.
+      if (!this._chargeHit) {
+        for (const pl of (ctx.players || [this.target])) {
+          if (!pl || pl.dead || pl.downed) continue;
+          if (this.pos.distanceTo(pl.pos) < 4) { pl.takeDamage(this.meta.dmg, this.pos); this._chargeHit = true; ctx.shake && ctx.shake(0.3); }
+        }
+      }
       return;
     }
     if (this.spiralT > 0) {                  // rotating spray (dodge by circling)
@@ -267,7 +277,11 @@ export class Enemy {
       }
       ctx.audio && ctx.audio.sfx('goocaster');
     } else if (a === 'slam') {
-      if (dist < 7.5) this.target.takeDamage(this.meta.dmg * 1.3, this.pos);  // stay out of the red ring
+      // the shockwave hits EVERY player inside the red ring (co-op)
+      for (const pl of (ctx.players || [this.target])) {
+        if (!pl || pl.dead || pl.downed) continue;
+        if (pl.pos.distanceTo(this.pos) < 7.5) pl.takeDamage(this.meta.dmg * 1.3, this.pos);
+      }
       ctx.spawnExplosion && ctx.spawnExplosion(this.pos.clone().setY(0.5), 7);
       ctx.shake && ctx.shake(0.7);
       ctx.audio && ctx.audio.sfx('explosion');
@@ -275,6 +289,7 @@ export class Enemy {
       this.spiralT = 1.1; this.spiralCd = 0; this.spiralAngle = Math.random() * Math.PI * 2;
     } else if (a === 'charge') {
       this.charging = 0.55;
+      this._chargeHit = false;
       ctx.audio && ctx.audio.sfx('gurg');
     } else {
       ctx.requestSpawn && ctx.requestSpawn('blork', this.bossPhase >= 2 ? 3 : 2, this.pos);
@@ -340,11 +355,16 @@ export class Enemy {
   _detonate(ctx) {
     const R = 4.4;
     ctx.spawnExplosion && ctx.spawnExplosion(this.pos.clone().setY(1.0), R);
-    if (this.target.pos.distanceTo(this.pos) < R) this.target.takeDamage(this.meta.dmg, this.pos);
+    // the blast catches every player in radius (co-op), not just the locked target —
+    // and works even if everyone is downed (no this.target needed)
+    for (const pl of (ctx.players || (this.target ? [this.target] : []))) {
+      if (!pl || pl.dead || pl.downed) continue;
+      if (pl.pos.distanceTo(this.pos) < R) pl.takeDamage(this.meta.dmg, this.pos);
+    }
     ctx.shake && ctx.shake(0.5);
     ctx.audio && ctx.audio.sfx('explosion');
     this._noSiphon = true;          // it blew itself up on you — no heal reward
-    this._die(this.target.pos);
+    this._die(this.target ? this.target.pos : null);
   }
 
   // Mendbot — a floating support drone. No attack; it hangs back and pulses heals
@@ -397,10 +417,19 @@ export class Enemy {
     this.blinkCd -= dt;
     if (this.blinkCd <= 0) {
       this.blinkCd = 1.3 + Math.random() * 1.5;
+      // pick a landing spot that isn't inside a crate/pillar/wall — an embedded
+      // blinker is unhittable (world raycasts eat the shots before the body test).
+      // A few tries, then skip this blink rather than teleport into geometry.
+      let lx = 0, lz = 0, ok = false;
+      for (let i = 0; i < 4 && !ok; i++) {
+        const ang = Math.random() * Math.PI * 2, hop = 5 + Math.random() * 3;
+        lx = this.pos.x + Math.cos(ang) * hop;
+        lz = this.pos.z + Math.sin(ang) * hop;
+        ok = !ctx.physics || ctx.physics.boxFree(lx, this.pos.y, lz, this.radius, this.height);
+      }
+      if (!ok) return;
       ctx.spawnImpact && ctx.spawnImpact(this.aimPoint(), 'blink');
-      const ang = Math.random() * Math.PI * 2, hop = 5 + Math.random() * 3;
-      this.pos.x += Math.cos(ang) * hop;
-      this.pos.z += Math.sin(ang) * hop;
+      this.pos.x = lx; this.pos.z = lz;
       this.mesh.position.copy(this.pos);
       ctx.spawnImpact && ctx.spawnImpact(this.aimPoint(), 'blink');
       ctx.audio && ctx.audio.sfx('scopein');
@@ -434,6 +463,26 @@ export class Enemy {
       const j = 1 + Math.sin(this.wobble) * 0.06;
       b.scale.y = (this.type === 'wobbler' ? 1 : (this.type === 'gurg' ? 0.85 : 1.05)) * j;
       b.scale.x = b.scale.z = 1 / Math.sqrt(j);
+      // hit flash — frame-driven so it can't race pause/death or fight the boss
+      // telegraph (which rewrites the emissive every frame while it's winding up)
+      if (this.flashT > 0) {
+        this.flashT -= dt;
+        if (b.material.emissive) { b.material.emissive.setHex(0xffffff); b.material.emissiveIntensity = 0.6; }
+        if (this.flashT <= 0 && b.material.emissive && this.bossTell <= 0) { b.material.emissive.setHex(0x000000); b.material.emissiveIntensity = 0; }
+      }
+    }
+    if (this.shieldFlashT > 0) {
+      this.shieldFlashT -= dt;
+      const bub = this.mesh.userData.shieldBubble;
+      if (bub) bub.material.opacity = this.shieldFlashT > 0 ? 0.5 : 0.18;
+    }
+    if (this.plateFlashT > 0) {
+      this.plateFlashT -= dt;
+      const plate = this.mesh.userData.plate;
+      if (plate && plate.material.emissive) {
+        plate.material.emissive.setHex(0x9fd0ff);
+        plate.material.emissiveIntensity = this.plateFlashT > 0 ? 0.9 : 0;
+      }
     }
     const bulb = this.mesh.userData.antennaBulb;
     if (bulb) bulb.position.x = Math.sin(this.wobble * 0.7) * 0.08;

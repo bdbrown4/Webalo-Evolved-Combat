@@ -34,6 +34,7 @@ export class LevelBuilder {
     const accent = new THREE.Color(mission.palette.accent);
     const floorTex = AssetFactory.surfaceTexture('floor');
     const wallTex = AssetFactory.surfaceTexture('wall');
+    this._baseTex = [floorTex, wallTex];               // disposed with the level
     // per-room material with a texture clone whose repeat matches the surface
     // size, so panel/grime detail keeps a consistent real-world scale
     const texMat = (tex, color, rough, rx, ry) => {
@@ -104,14 +105,9 @@ export class LevelBuilder {
         this.group.add(doorMesh);
         physics.addBox({ x: 0, y: bh / 2, z: room.zBack }, { x: DOOR_W, y: bh, z: 0.4 }, 'door');
         room.door = { mesh: doorMesh, collider: physics.colliders[physics.colliders.length - 1] };
-      } else if (seg.event === 'vehicle-escape') {
-        // exit gap + glowing escape marker
-        this._wallWithGap(wallMat, room.zBack, sz.w, sz.h, physics);
-        const exit = AssetFactory.prop('ringArch', accent.getHex());
-        exit.position.set(0, 0, room.zBack - 1); exit.rotation.z = 0;
-        this.group.add(exit);
-        room.exitZone = { z: room.zBack - 1.5, x: 0, r: 4 };
       } else {
+        // (a last-room vehicle-escape can't reach here — that segment kind
+        // early-returns above and builds the open track instead)
         this._box(wallMat, 0, sz.h / 2, room.zBack, sz.w, sz.h, 1, physics, 'wall', true);
       }
 
@@ -388,6 +384,7 @@ export class LevelBuilder {
 
   update(dt, player, ctx) {
     if (this.complete || this.failed) return;
+    this._animateDoors(dt);
 
     // animate pickups + try collection
     for (const p of this.pickups) {
@@ -524,17 +521,22 @@ export class LevelBuilder {
     if (!room.door) return;
     const idx = this.physics.colliders.indexOf(room.door.collider);
     if (idx >= 0) this.physics.colliders.splice(idx, 1);
-    // slide the door up out of the way
+    // slide the door up out of the way — animated from update() with real dt (the
+    // old rAF loop ran at a framerate-dependent speed, kept ticking while paused,
+    // and survived dispose())
     room.door.opening = true;
-    const mesh = room.door.mesh;
-    const tick = () => {
-      mesh.position.y += 0.18;
-      if (mesh.position.y < 10) requestAnimationFrame(tick); // clear of any room height
-      else mesh.visible = false;
-    };
-    tick();
     ctx.audio && ctx.audio.sfx('ui');
     ctx.onObjective && ctx.onObjective('Advance');
+  }
+
+  // Advance any opening door panels; called each frame from update().
+  _animateDoors(dt) {
+    for (const room of this.segments) {
+      const d = room.door;
+      if (!d || !d.opening || !d.mesh.visible) continue;
+      d.mesh.position.y += dt * 11;
+      if (d.mesh.position.y >= 10) d.mesh.visible = false; // clear of any room height
+    }
   }
 
   _win(ctx) { if (this.complete || this.failed) return; this.complete = true; ctx.onMissionComplete && ctx.onMissionComplete(); }
@@ -550,5 +552,6 @@ export class LevelBuilder {
         });
       }
     });
+    if (this._baseTex) { this._baseTex.forEach((t) => t.dispose()); this._baseTex = null; }
   }
 }

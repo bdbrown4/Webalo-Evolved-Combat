@@ -26,20 +26,38 @@ export class Physics {
   }
 
   // pos is the FEET position. Returns { grounded } and mutates pos + vel.
+  // Fast movers (boosted vehicle ~28 u/s, boss charge) are substepped so a frame
+  // hitch can't teleport them clean through a thin collider (doors are 0.4 thick).
   moveAndCollide(pos, vel, dt, radius, height) {
     const out = { grounded: false };
-    // ---- X axis ----
-    pos.x += vel.x * dt;
-    this._resolveAxis(pos, vel, radius, height, 'x');
-    // ---- Z axis ----
-    pos.z += vel.z * dt;
-    this._resolveAxis(pos, vel, radius, height, 'z');
-    // ---- Y axis ----
-    pos.y += vel.y * dt;
-    out.grounded = this._resolveAxis(pos, vel, radius, height, 'y');
+    const maxSpeed = Math.max(Math.abs(vel.x), Math.abs(vel.y), Math.abs(vel.z));
+    const steps = Math.min(4, Math.max(1, Math.ceil((maxSpeed * dt) / 0.3)));
+    const sdt = dt / steps;
+    for (let i = 0; i < steps; i++) {
+      // ---- X axis ----
+      pos.x += vel.x * sdt;
+      this._resolveAxis(pos, vel, radius, height, 'x');
+      // ---- Z axis ----
+      pos.z += vel.z * sdt;
+      this._resolveAxis(pos, vel, radius, height, 'z');
+      // ---- Y axis ----
+      pos.y += vel.y * sdt;
+      if (this._resolveAxis(pos, vel, radius, height, 'y')) out.grounded = true;
+    }
     // world floor (default y=0) as a safety net; lowered to a void on the track
     if (pos.y < this.floorY) { pos.y = this.floorY; if (vel.y < 0) vel.y = 0; out.grounded = true; }
     return out;
+  }
+
+  // Is an entity-sized box at (x, y, z) clear of all world colliders? Used by
+  // teleporting enemies to avoid blinking into geometry.
+  boxFree(x, y, z, radius, height) {
+    for (const c of this.colliders) {
+      if (x - radius < c.max.x && x + radius > c.min.x &&
+          y < c.max.y && y + height > c.min.y &&
+          z - radius < c.max.z && z + radius > c.min.z) return false;
+    }
+    return true;
   }
 
   _playerAABB(pos, radius, height) {

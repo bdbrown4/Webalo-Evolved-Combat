@@ -56,13 +56,18 @@ export class HUD {
   show(v) { this.el.classList.toggle('hidden', !v); this.flash.classList.toggle('hidden', !v); }
 
   // Kill-feed entry: a short-lived "✖ Name" line, colour-keyed to the enemy.
+  // `name` can arrive over the network (PvP frag events), so it goes in as TEXT —
+  // never innerHTML — or a hostile peer could inject markup into the DOM.
   killFeed(name, color) {
     const feed = this.$('#killfeed');
     if (!feed) return;
     const hex = '#' + (color || 0xffffff).toString(16).padStart(6, '0');
     const d = document.createElement('div');
     d.className = 'kf-entry';
-    d.innerHTML = `<span class="kf-x" style="color:${hex}">✖</span> ${name}`;
+    const x = document.createElement('span');
+    x.className = 'kf-x'; x.style.color = hex; x.textContent = '✖';
+    d.appendChild(x);
+    d.appendChild(document.createTextNode(' ' + name));
     feed.prepend(d);
     while (feed.children.length > 5) feed.removeChild(feed.lastChild);
     setTimeout(() => { d.classList.add('kf-out'); setTimeout(() => d.remove(), 420); }, 2600);
@@ -71,10 +76,18 @@ export class HUD {
   // Hide per-frame combat overlays when leaving play (they're only rewritten by
   // update(), which stops the moment the state leaves 'playing' — without this
   // a scope mask or cook bar would freeze on screen under the result banner).
+  // Also drops mid-flight subtitles/banners/escape state so they can't play their
+  // remaining seconds into the NEXT mission.
   clearTransients() {
     this.$('#scope').classList.add('hidden');
     this.$('#cook').classList.add('hidden');
     this.$('#reticle').classList.remove('hidden');
+    this.$('#subtitle').classList.add('hidden');
+    this._subQueue = []; this._subT = 0;
+    this._bannerT = 0; this.$('#banner').classList.add('hidden');
+    this._escape = null;
+    this._minibossOn = false;
+    this._lastWeapon = undefined;
   }
 
   setObjective(text) { this.$('#o-text').textContent = text; }

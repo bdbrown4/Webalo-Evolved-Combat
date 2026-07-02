@@ -164,6 +164,7 @@ export class Input {
   // fires if the capture is aborted (Escape, controller B, or leaving Settings), so
   // the UI can revert the "Press a key…" prompt instead of getting stuck on it.
   startRebind(action, onDone, onCancel) {
+    this.cancelRebind();               // starting a second capture reverts the first button's UI
     this._rebindCancel = onCancel || null;
     this._rebindResolver = (code) => {
       this.settings.setBinding(action, code);
@@ -195,7 +196,9 @@ export class Input {
       // Always let Escape through to the game (pause), even when not "enabled".
       if (this._codeDown.has(e.code)) return; // ignore auto-repeat
       this._codeDown.add(e.code);
-      if (['Space', 'ArrowUp', 'ArrowDown', 'Tab'].includes(e.code)) e.preventDefault();
+      // only swallow page-scroll/focus keys while actually PLAYING — at the menus,
+      // Tab must traverse focus and Space must activate buttons (keyboard-only users)
+      if (this.enabled && ['Space', 'ArrowUp', 'ArrowDown', 'Tab'].includes(e.code)) e.preventDefault();
     });
     window.addEventListener('keyup', (e) => { this._codeDown.delete(e.code); });
 
@@ -275,5 +278,5 @@ export class Input {
 
   isDown(action) { return this.enabled && this._isCodeDown(action); }
   pressed(action) { return this.enabled && this._actionEdge.has(action); } // edge: true only on the frame it went down
-  takeWheel() { const w = this.wheel; return w; }
+  takeWheel() { const w = this.wheel; this.wheel = 0; return w; } // consume: a 2nd same-frame reader gets 0
 }

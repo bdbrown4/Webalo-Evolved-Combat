@@ -393,6 +393,7 @@ export class Game {
     if (this._hostAvatar) { this.scene.remove(this._hostAvatar); this._hostAvatar = null; }
     if (this._svHudEl) { this._svHudEl.remove(); this._svHudEl = null; }
     this._guestNetState = null; this._svNetState = null; this._guestPlayer = null; this._netEvents.length = 0;
+    this._lastGuestVitals = null;   // fresh world = fresh vitals baseline (a rebuild is not "damage")
     this._hostState = null; this._coopOver = false;
     this._clearNadeModel();
     this._clearMeleeModel();
@@ -625,7 +626,18 @@ export class Game {
     this._coopOver = false; this._coopLeft = false;
     this._runPerks = []; this._guestRunPerks = []; this._pendingGuestPerk = null; this._hostPendingPerk = null;
     this.missionIndex = 0; this._lastEscPush = null;
-    net.on('input', (pkt) => { if (this._guestPlayer && this._guestPlayer._netInput) this._guestPlayer._netInput.feed(pkt); });
+    // co-op is exactly TWO players. Bind to the first peer; if anyone else wanders
+    // into the room code, ignore their input and tell them the session is full
+    // (without this, a 3rd player's inputs would merge into the one guest body).
+    this._coopPeerId = net.peers()[0] || null;
+    net.onPeer((id) => {
+      if (this._coopPeerId == null) this._coopPeerId = id;
+      else if (id !== this._coopPeerId) net.send('full', 1, id);
+    });
+    net.on('input', (pkt, peerId) => {
+      if (peerId !== undefined && this._coopPeerId !== null && peerId !== this._coopPeerId) return;
+      if (this._guestPlayer && this._guestPlayer._netInput) this._guestPlayer._netInput.feed(pkt);
+    });
     net.on('retryReq', () => { if (this._coopOver) this._coopRetry(); });
     net.on('guestPerk', (id) => { this._pendingGuestPerk = id; });        // campaign: guest's between-mission pick
     net.onState((s) => { if (s === 'closed') this._onPeerLeft(); });
@@ -668,7 +680,22 @@ export class Game {
     this._coopOver = false; this._coopLeft = false;
     net.on('start', (d) => this._beginCoopGuest(d));
     net.on('snap', (snap) => { this._lastSnap = snap; applySnapshot(this, snap); });
+    net.on('full', () => this._coopFullNotice());
     net.onState((s) => { if (s === 'closed') this._onPeerLeft(); });
+  }
+
+  // This room already has its players — tell the late joiner and offer the exit.
+  _coopFullNotice() {
+    if (this.level) return;                      // already playing — not us (defensive)
+    this._coopClearTimers();
+    const net = this.net; this.net = null; this.coopRole = null;
+    if (net) { try { net.close(); } catch (e) { /* gone */ } }
+    if (this._pendingNet) { try { this._pendingNet.close(); } catch (e) { /* gone */ } this._pendingNet = null; }
+    const el = this._showCoopOverlay(`
+      <div class="coop-title">Session Full</div>
+      <div class="coop-sub" style="text-align:center">That room already has its players. Ask the host for a fresh code, or start your own.</div>
+      <button class="btn ghost" data-act="back">← Back</button>`);
+    el.querySelector('[data-act="back"]').addEventListener('click', () => { this._clearCoopOverlay(); this.onQuit && this.onQuit(); });
   }
 
   _beginCoopGuest(d) {
@@ -1117,6 +1144,19 @@ export class Game {
     }
   }
 
+  // GUEST: the host owns our vitals, so "being shot" only shows up as the snapshot's
+  // health/shield dropping — turn that drop back into the flash + hurt/shield sfx a
+  // local hit would have made. Regen/revive RAISE vitals, so rises never trigger it.
+  _guestDamageFeedback(health, shield) {
+    const prev = this._lastGuestVitals;
+    this._lastGuestVitals = { h: health, s: shield };
+    if (!prev) return false;
+    const drop = (prev.h - health) + (prev.s - shield);
+    if (drop < 0.5) return false;
+    this.audio.sfx(prev.s > 0 && shield <= 0 ? 'shieldbreak' : shield > 0 ? 'shieldhit' : 'hurt');
+    return true;   // caller sets hs.hitFlash for this frame
+  }
+
   _updateGuestHud(dt, scoped) {
     const gp = this._guestNetState;
     let hs;
@@ -1152,6 +1192,9 @@ export class Game {
       dmgSfx: null, hitFlash: false, lowShield: gp.shield <= 0 && gp.health < gp.healthMax * 0.5,
       scoped, scopeZoom: scoped && this.player.weapon ? this.player.weapon.def.adsZoom : 0, driving: false,
     } : this.player.hudState();
+    // vitals drop → flash + sfx (the host owns damage; we reconstruct the feel)
+    if (this._pvp && this._pvpMe) hs.hitFlash = this._guestDamageFeedback(this._pvpMe.health, this._pvpMe.shield) || hs.hitFlash;
+    else if (gp) hs.hitFlash = this._guestDamageFeedback(gp.health, gp.shield) || hs.hitFlash;
     const ghostEnemies = [];
     for (const [, g] of this._ghosts) if (!g.dead) ghostEnemies.push({ pos: g.mesh.position });
     this.hud.update(dt, hs, ghostEnemies, this.player);
@@ -1300,6 +1343,7 @@ export class Game {
   startPvpHost(net) {
     this.net = net; this.coopRole = 'host';
     this._coopOver = false; this._coopLeft = false;
+    this._lobbyClosed = true;                            // late joiners get 'full', not a seat
     this._pvpPeers = (this._lobbyPeers || []).slice();   // peers gathered in the lobby
     net.on('input', (pkt, peerId) => { const g = this._pvpGuests && this._pvpGuests.get(peerId); if (g && g._netInput) g._netInput.feed(pkt); });
     net.on('rematchReq', () => { if (this._pvp && this._pvp.over) this._pvpBuild(); });
@@ -1332,6 +1376,7 @@ export class Game {
       const g = this.addRemotePlayer(sp[pid], { color: pvpColor(teams, pid, team), id: 'p' + pid, weapons: ['rifle', 'pistol'] });
       g._netInput = new NetInputProxy();
       this._pvpArm(g, sp[pid], pid, team, teams ? `${team === 0 ? 'Blue' : 'Red'} ${Math.ceil(pid / 2)}` : 'P' + (pid + 1));
+      g._peerId = peerId;                    // so host→guest unicasts (respawn) can find them
       this._pvpGuests.set(peerId, g);
       this.net.send('start', { seed: this._levelSeed, mode: this._pvp.mode, fragLimit: this._pvp.fragLimit,
         myId: pid, team, players: peers.length + 1,
@@ -1362,6 +1407,11 @@ export class Game {
       this.player._syncCamera(this.settings, 0);
       this.input.clearTransient();                  // don't carry a death-frame press into the respawn
       this.hud.banner('RESPAWN', 'Spawn shield up — fire to drop it.', 1.4);
+    } else if (p._peerId && this.net) {
+      // tell the guest WHERE it respawned — guests are movement-authoritative and
+      // snap themselves on the dead→alive edge, so without this they'd snap back
+      // to their original corner and instantly override the host's pick.
+      this.net.send('respawn', { x: s.x, y: s.y, z: s.z, yaw: s.yaw || 0 }, p._peerId);
     }
     if (p._avatar) p._avatar.visible = true;
   }
@@ -1373,6 +1423,8 @@ export class Game {
     if (!this._pvp) return;
     for (const p of this.players) {
       if (p._invulnT > 0) p._invulnT -= dt;            // spawn protection ticking down
+      // frag attribution decays: a hit from a minute ago shouldn't claim a later self-kill
+      if (p.lastAttacker && !p.dead) { p.lastAttackerT = (p.lastAttackerT || 0) + dt; if (p.lastAttackerT > 5) p.lastAttacker = null; }
       if (p.dead && !p._pvpDeadHandled) {
         p._pvpDeadHandled = true; p._respawnT = 3.0;
         if (p._avatar) p._avatar.visible = false;
@@ -1421,6 +1473,10 @@ export class Game {
     this._coopOver = false; this._coopLeft = false;
     net.on('start', (d) => this._beginPvpGuest(d));
     net.on('pvpsnap', (snap) => { applyPvpSnap(this, snap); });
+    // the host picks each respawn corner (farthest from rivals) — adopt it so our
+    // dead→alive self-snap lands where the host put our body
+    net.on('respawn', (d) => { if (this._mySpawn) { this._mySpawn.set(d.x, d.y, d.z); this._mySpawn.yaw = d.yaw || 0; } });
+    net.on('full', () => this._coopFullNotice());
     net.onState((s) => { if (s === 'closed') this._onPeerLeft(); });
   }
 
@@ -1468,8 +1524,11 @@ export class Game {
     const startBtn = el.querySelector('[data-act="start"]');
     const roster = el.querySelector('[data-roster]');
     const refresh = () => { roster.innerHTML = 'You (host)' + this._lobbyPeers.map((_, i) => `<br>Player ${i + 2} — joined`).join(''); if (startBtn) startBtn.disabled = this._lobbyPeers.length < 1; };
+    this._lobbyClosed = false;
     net.onPeer((id) => {
+      if (this._lobbyClosed) { if (!this._pvpGuests || !this._pvpGuests.has(id)) net.send('full', 1, id); return; }  // match underway
       if (this._lobbyPeers.length < cap - 1 && !this._lobbyPeers.includes(id)) { this._lobbyPeers.push(id); this.audio.sfx('ui'); refresh(); }
+      else if (!this._lobbyPeers.includes(id)) { net.send('full', 1, id); return; }   // roster full — turn them away
       // a 1v1 needs no "Start" — launch as soon as the single rival connects
       if (duel && this._lobbyPeers.length >= 1) { this._coopSetStatus(el, 'Rival connected! Launching…', true); this._coopLaunchTimer = setTimeout(launch, 700); }
     });

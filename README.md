@@ -166,6 +166,24 @@ Settings (controls, mouse sensitivity, audio levels, and video/quality options)
 persist in `localStorage`. Campaign progress and checkpoints are saved
 automatically.
 
+Accessibility options live under `Settings → Gameplay`: aim assist
+(touch/controller), reduced damage flash, HUD size, haptics, and a left-handed
+touch layout. The motion tracker is shape-coded (triangles = hostiles,
+diamond = boss, squares = pickups), not hue-coded.
+
+## Development
+
+```
+npm run dev        # vite dev server
+npm test           # unit tests (vitest) — deterministic core modules
+npm run test:e2e   # Playwright smoke test: boots the real game headless
+npm run lint       # eslint
+npm run build      # production bundle
+```
+
+CI (`.github/workflows/ci.yml`) runs lint + unit tests + build plus the
+headless smoke test on every PR.
+
 ## Project layout
 
 ```
